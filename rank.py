@@ -1,0 +1,875 @@
+#!/usr/bin/env python3
+"""
+Redrob Hackathon — Candidate Ranker (v4)
+Improvements over v3:
+  - FIX 1: Frozen reference date (REFERENCE_DATE) for fully reproducible rankings
+  - FIX 2: IDF-weighted JD term matching — rare terms (ndcg, mrr) score higher than broad ones
+  - FIX 3: Promotion score restricted to ML/engineering title families only
+  - FIX 4: Assessment weight raised to 0.13; no-assessment candidates penalised (0.4) not neutral
+  - FIX 5: Behavioral multiplier capped at 0.5 downside (was 0.2) to protect strong tech candidates
+  - FIX 6: Consulting double-penalty removed — per-job penalty OR overall multiplier, not both
+  - FIX 7: Career normalization by total weighted months, not raw job count
+  - FIX 8: Honeypot expert-count check scales with years of experience
+Usage: python3 rank_v4.py --candidates candidates.jsonl --out submission.csv
+         [--ref-date 2025-01-01]   # optional fixed reference date (ISO format)
+"""
+
+import json
+import csv
+import argparse
+import gzip
+import logging
+from datetime import date, datetime
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+log = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# CONFIG — tweak these weights to experiment
+# ─────────────────────────────────────────────
+WEIGHTS = {
+    "career":      0.19,   # reduced slightly to fund assessment raise
+    "description": 0.18,   # real work descriptions matter more
+    "skills":      0.22,   # core technical fit
+    "jd_fit":      0.15,   # IDF-weighted JD keyword match (v4: no longer equal counts)
+    "assessments": 0.13,   # FIX 4: raised from 0.07 — verified scores deserve more weight
+    "experience":  0.07,   # years matter less than what you did with them
+    "location":    0.03,   # expertise > geography
+    "education":   0.03,   # reduced to fund assessment raise
+    # promotion_score feeds into behavioral_multiplier, not base weights
+}
+# Must sum to 1.0
+assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9, f"Weights sum to {sum(WEIGHTS.values())}"
+
+# JD target: 5-9 years. Sweet spot 6-8.
+EXP_MIN, EXP_IDEAL_LOW, EXP_IDEAL_HIGH, EXP_MAX = 3, 6, 8, 12
+
+# Skills the JD explicitly requires (must-haves)
+REQUIRED_SKILLS = {
+    "embeddings", "sentence-transformers", "sentence transformers",
+    "vector database", "vector db", "pinecone", "weaviate", "qdrant",
+    "milvus", "opensearch", "elasticsearch", "faiss", "chroma",
+    "retrieval", "rag", "hybrid search", "dense retrieval",
+    "ranking", "learning to rank", "information retrieval",
+    "nlp", "python",
+    # Evaluation — JD specifically values these
+    "ndcg", "mrr", "map",
+    "a/b testing", "a/b test",
+    "evaluation framework",
+    "mean average precision",
+}
+
+# Skills that are nice to have (bonus points)
+BONUS_SKILLS = {
+    "lora", "qlora", "peft", "fine-tuning", "fine tuning", "llm",
+    "large language model", "xgboost", "neural ranking",
+    "distributed systems", "pytorch", "tensorflow",
+    "open source", "a/b testing", "bm25",
+}
+
+# Keywords to find inside career description text
+# Strong = hands-on production ML work (high value)
+# Medium = general ML/data work (some value)
+DESCRIPTION_KEYWORDS_HIGH = {
+    "embedding", "embeddings", "vector search", "vector db", "vector database",
+    "retrieval", "rag", "ranking", "recommendation", "semantic search",
+    "faiss", "pinecone", "weaviate", "qdrant", "milvus", "opensearch",
+    "sentence-transformers", "dense retrieval", "hybrid search",
+    "information retrieval", "learning to rank",
+    "fine-tuning", "fine-tuned", "lora", "qlora", "llm", "language model",
+    "ml pipeline", "model serving", "model deployment",
+    "bm25", "rerank",
+    # Evaluation — JD specifically values these
+    "ndcg", "mrr", "map",
+    "mean average precision",
+    "a/b test", "a/b testing",
+    "evaluation framework",
+    "offline evaluation", "online evaluation",
+    "precision@", "recall@",
+    "hit rate", "click-through",
+}
+
+DESCRIPTION_KEYWORDS_MEDIUM = {
+    "machine learning", "deep learning", "neural network", "pytorch", "tensorflow",
+    "nlp", "natural language", "text classification",
+    "feature engineering", "model training",
+    "python", "data pipeline",
+}
+
+# NEW in v4: IDF-weighted JD terms — rarer / more specific terms score higher.
+# Weight rationale: evaluation metrics (ndcg, mrr) and specific vector DB names
+# are highly discriminating; broad terms like "retrieval" or "embeddings" appear
+# on many profiles and carry less signal.
+CORE_JD_TERMS = {
+    # Evaluation metrics — very rare, extremely high signal
+    "ndcg":                   3.0,
+    "mrr":                    3.0,
+    "mean average precision": 3.0,
+    "map":                    2.5,
+    "evaluation framework":   2.5,
+    "offline evaluation":     2.5,
+    "online evaluation":      2.5,
+    "precision@":             2.0,
+    "recall@":                2.0,
+    "hit rate":               2.0,
+    "a/b test":               2.0,
+    "a/b testing":            2.0,
+    # Specific vector DBs — named tools, high signal
+    "qdrant":                 2.5,
+    "weaviate":               2.5,
+    "milvus":                 2.5,
+    "faiss":                  2.0,
+    "pinecone":               2.0,
+    # Retrieval/ranking techniques — specific but more common
+    "learning to rank":       2.0,
+    "dense retrieval":        2.0,
+    "hybrid search":          2.0,
+    "bm25":                   2.0,
+    "rerank":                 1.8,
+    "vector search":          1.5,
+    "information retrieval":  1.5,
+    # Broad but relevant
+    "retrieval":              1.0,
+    "ranking":                1.0,
+    "embeddings":             1.0,
+    "rag":                    1.2,
+}
+# Max possible IDF-weighted score (used to normalise to 0-1)
+CORE_JD_MAX = sum(CORE_JD_TERMS.values())
+
+# Skill assessment names that are relevant to this JD
+RELEVANT_ASSESSMENTS = {
+    "python", "nlp", "machine learning", "deep learning",
+    "information retrieval", "embeddings", "pytorch", "tensorflow",
+    "sql", "data structures", "algorithms",
+}
+
+# Consulting/IT-services companies — JD explicitly disqualifies these
+CONSULTING_COMPANIES = {
+    "tcs", "tata consultancy", "infosys", "wipro", "accenture",
+    "cognizant", "capgemini", "hcl", "tech mahindra", "mindtree",
+    "mphasis", "hexaware", "ltimindtree", "l&t infotech",
+}
+
+# Preferred India locations
+INDIA_METROS = {
+    "pune", "noida", "delhi", "gurugram", "gurgaon", "bengaluru",
+    "bangalore", "hyderabad", "mumbai", "chennai", "delhi ncr",
+}
+
+# FIX 3: Senior title keywords — only count promotion within ML/engineering tracks.
+# "Senior QA Engineer" or "Senior Consultant" no longer earns promotion credit.
+SENIOR_TITLES = {"senior", "lead", "staff", "principal"}
+# The job title must also contain at least one of these role keywords
+ML_ENG_ROLE_KEYWORDS = {
+    "engineer", "scientist", "researcher", "developer",
+    "ml", "ai", "nlp", "search", "ranking", "recommendation",
+    "data", "backend", "platform", "infrastructure",
+}
+
+# FIX 1: Use a frozen REFERENCE_DATE instead of date.today() so rankings are
+# fully reproducible across different run times on the same data.
+# Can be overridden at runtime via --ref-date YYYY-MM-DD.
+REFERENCE_DATE = date(2025, 1, 1)  # override via --ref-date in main()
+
+
+# ─────────────────────────────────────────────
+# HELPER: days since a date string
+# ─────────────────────────────────────────────
+def days_since(date_str):
+    if not date_str:
+        return 9999
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return (REFERENCE_DATE - d).days
+    except Exception:
+        return 9999
+
+
+# ─────────────────────────────────────────────
+# SAFE PROFILE ACCESSOR (bug fix from v2)
+# ─────────────────────────────────────────────
+def get_profile(c):
+    return c.get("profile", {})
+
+
+# ─────────────────────────────────────────────
+# HONEYPOT DETECTION
+# ─────────────────────────────────────────────
+def is_honeypot(c):
+    skills = c.get("skills", [])
+    career = c.get("career_history", [])
+    yoe = get_profile(c).get("years_of_experience", 0)  # safe access
+
+    # Red flag 1: expert skill with 0 months
+    expert_zero = sum(
+        1 for s in skills
+        if s.get("proficiency") == "expert" and s.get("duration_months", 1) == 0
+    )
+    if expert_zero >= 3:
+        return True
+
+    # Red flag 2: career months much less than claimed YoE
+    total_months = sum(j.get("duration_months", 0) for j in career)
+    if yoe > 3 and total_months < yoe * 12 * 0.4:
+        return True
+
+    # Red flag 3: too many expert skills relative to experience
+    # FIX 8: threshold scales with YoE — a 10yr engineer can legitimately
+    # have more expert skills than a 3yr engineer.
+    expert_count = sum(1 for s in skills if s.get("proficiency") == "expert")
+    expert_limit = max(12, int(yoe * 2))   # e.g. 10yr → allows up to 12
+    if expert_count >= expert_limit:
+        return True
+
+    # Red flag 4: junior candidate (< 3 yoe) claiming too many expert skills
+    # Even a genuinely talented junior can't have 8+ expert-level skills
+    if yoe < 3 and expert_count > 8:
+        return True
+
+    return False
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 1: CAREER SCORE (0-1)
+# ─────────────────────────────────────────────
+def score_career(c):
+    career = c.get("career_history", [])
+    if not career:
+        return 0.0
+
+    weighted_score = 0.0
+    total_months = 0
+    consulting_only = True
+
+    for job in career:
+        title = job.get("title", "").lower()
+        company = job.get("company", "").lower()
+        industry = job.get("industry", "").lower()
+        size = job.get("company_size", "")
+        months = job.get("duration_months", 0)
+
+        time_weight = min(months / 24, 2.0)
+        total_months += months
+
+        title_score = 0.0
+        if any(t in title for t in ["ml engineer", "machine learning", "ai engineer",
+                                     "applied scientist", "nlp engineer", "search engineer",
+                                     "ranking", "recommendation"]):
+            title_score = 1.0
+        elif any(t in title for t in ["data scientist", "research engineer",
+                                       "software engineer", "backend engineer",
+                                       "data engineer"]):
+            title_score = 0.6
+        elif any(t in title for t in ["analyst", "consultant", "manager",
+                                       "frontend", "qa", "test"]):
+            title_score = 0.1
+
+        # FIX 6: Apply consulting penalty per-job OR as an overall multiplier,
+        # not both. The per-job company_bonus = -0.3 already discounts consulting
+        # roles. The blanket 0.75 multiplier is removed to avoid double-penalising.
+        company_bonus = 0.0
+        is_consulting = any(firm in company for firm in CONSULTING_COMPANIES)
+        if is_consulting:
+            company_bonus = -0.2   # per-job penalty only; no overall multiplier below
+        elif industry in ["software", "fintech", "saas", "ai", "ml",
+                           "food delivery", "ecommerce", "edtech"]:
+            company_bonus = 0.3
+            consulting_only = False
+        elif size in ["51-200", "201-500", "501-1000"]:
+            company_bonus = 0.2
+            consulting_only = False
+        elif not is_consulting:
+            consulting_only = False
+
+        weighted_score += (title_score + company_bonus) * time_weight
+
+    # FIX 7: Normalize by total time_weight (weighted months), not raw job count.
+    # Previously dividing by len(career) unfairly penalised candidates with many
+    # short roles vs. those with few long ones, even though time_weight already
+    # accounts for duration at the per-job level.
+    total_time_weight = sum(min(job.get("duration_months", 0) / 24, 2.0) for job in career)
+    score = weighted_score / max(total_time_weight, 1.0)
+
+    # FIX 6: consulting_only flag retained for informational use in reasoning,
+    # but the blanket score *= 0.75 penalty is removed (double-counted with per-job -0.3).
+    _ = consulting_only  # kept to avoid breaking generate_reasoning references
+
+    return max(0.0, min(score, 1.0))
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 2: CAREER DESCRIPTION SCORE (0-1)
+# Reads the actual text of each job description
+# ─────────────────────────────────────────────
+def score_description(c):
+    """
+    Scans the free-text description of each job role for ML/AI keywords.
+    This catches candidates who did real ML work even if their title was generic.
+    Example: a 'Software Engineer' whose description says 'built RAG pipeline
+    serving 2M queries/day' should score high here.
+    """
+    career = c.get("career_history", [])
+    if not career:
+        return 0.0
+
+    total_high = 0
+    total_medium = 0
+
+    for job in career:
+        desc = job.get("description", "").lower()
+        months = job.get("duration_months", 1)
+
+        # Weight by how long they held this role
+        time_weight = min(months / 24, 1.5)
+
+        high_hits = sum(1 for kw in DESCRIPTION_KEYWORDS_HIGH if kw in desc)
+        medium_hits = sum(1 for kw in DESCRIPTION_KEYWORDS_MEDIUM if kw in desc)
+
+        total_high += high_hits * time_weight
+        total_medium += medium_hits * time_weight
+
+    # Normalize: 5 strong keyword hits across career = full score
+    high_score = min(total_high / 5.0, 1.0)
+    medium_score = min(total_medium / 8.0, 1.0)
+
+    return 0.75 * high_score + 0.25 * medium_score
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 3: SKILLS SCORE (0-1)
+# ─────────────────────────────────────────────
+def score_skills(c):
+    skills = c.get("skills", [])
+    if not skills:
+        return 0.0
+
+    required_hits = 0.0
+    bonus_hits = 0.0
+
+    for skill in skills:
+        name = skill.get("name", "").lower()
+        proficiency = skill.get("proficiency", "beginner")
+        months = skill.get("duration_months", 0)
+        endorsements = skill.get("endorsements", 0)
+
+        # Skip suspiciously claimed skills
+        if proficiency in ["expert", "advanced"] and months == 0:
+            continue
+
+        prof_mult = {"beginner": 0.3, "intermediate": 0.6,
+                     "advanced": 0.85, "expert": 1.0}.get(proficiency, 0.5)
+
+        duration_mult = min(months / 48, 1.0) if months > 0 else 0.2
+        endorse_mult = min(endorsements / 20, 1.0)
+
+        skill_score = prof_mult * (0.6 * duration_mult + 0.4 * endorse_mult)
+
+        if any(req in name for req in REQUIRED_SKILLS):
+            required_hits += skill_score
+        elif any(bon in name for bon in BONUS_SKILLS):
+            bonus_hits += skill_score * 0.5
+
+    required_norm = min(required_hits / 3.0, 1.0)
+    bonus_norm = min(bonus_hits / 2.0, 1.0)
+
+    return 0.8 * required_norm + 0.2 * bonus_norm
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 4 (NEW in v3): JD FIT SCORE (0-1)
+# Checks career text + skills for core JD terms
+# ─────────────────────────────────────────────
+def score_jd_fit(c):
+    """
+    Scans career description text AND skill names for core JD terms.
+    FIX 2 (v4): Terms are now IDF-weighted — rare, discriminating terms like
+    'ndcg', 'mrr', 'qdrant' contribute more than broad terms like 'retrieval'.
+    Score is normalised against CORE_JD_MAX so it stays in [0, 1].
+    """
+    text = ""
+
+    for job in c.get("career_history", []):
+        text += " " + job.get("description", "").lower()
+        text += " " + job.get("title", "").lower()
+
+    for skill in c.get("skills", []):
+        text += " " + skill.get("name", "").lower()
+
+    # Accumulate IDF-weighted hits (each term matched at most once)
+    weighted_hits = sum(
+        weight for term, weight in CORE_JD_TERMS.items() if term in text
+    )
+
+    return min(weighted_hits / (CORE_JD_MAX * 0.35), 1.0)
+    # 0.35 * CORE_JD_MAX = ~35% of total weight needed for full score,
+    # which is achievable with ~8-10 well-matched terms.
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 5: SKILL ASSESSMENT SCORE (0-1)
+# Uses platform test scores from redrob_signals
+# ─────────────────────────────────────────────
+def score_assessments(c):
+    """
+    The Redrob platform gives candidates actual skill tests (0-100).
+    Unlike self-reported skills, these are verified scores.
+    FIX 4 (v4): Candidates with no assessments receive 0.4 (mild penalty)
+    instead of 0.5 (neutral). Verified signals should be rewarded.
+    """
+    assessments = c.get("redrob_signals", {}).get("skill_assessment_scores", {})
+    if not assessments:
+        return 0.4  # FIX 4: mild penalty for untested candidates (was 0.5 neutral)
+
+    relevant_scores = []
+    for skill_name, score in assessments.items():
+        skill_lower = skill_name.lower()
+        if any(rel in skill_lower for rel in RELEVANT_ASSESSMENTS):
+            relevant_scores.append(score)
+
+    if not relevant_scores:
+        return 0.4  # has assessments but none relevant = same mild penalty
+
+    avg = sum(relevant_scores) / len(relevant_scores)
+    return avg / 100.0
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 6: EXPERIENCE SCORE (0-1)
+# ─────────────────────────────────────────────
+def score_experience(c):
+    yoe = get_profile(c).get("years_of_experience", 0)  # safe access
+
+    if EXP_IDEAL_LOW <= yoe <= EXP_IDEAL_HIGH:
+        return 1.0
+    elif EXP_MIN <= yoe < EXP_IDEAL_LOW:
+        return 0.4 + 0.6 * (yoe - EXP_MIN) / (EXP_IDEAL_LOW - EXP_MIN)
+    elif EXP_IDEAL_HIGH < yoe <= EXP_MAX:
+        return 0.9 - 0.4 * (yoe - EXP_IDEAL_HIGH) / (EXP_MAX - EXP_IDEAL_HIGH)
+    else:
+        return 0.2
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 7: LOCATION SCORE (0-1)
+# ─────────────────────────────────────────────
+def score_location(c):
+    profile = get_profile(c)  # safe access
+    location = profile.get("location", "").lower()
+    country = profile.get("country", "").lower()
+    willing = c.get("redrob_signals", {}).get("willing_to_relocate", False)
+
+    if country == "india":
+        if "pune" in location or "noida" in location:
+            return 1.0
+        elif any(city in location for city in INDIA_METROS):
+            return 0.85
+        else:
+            return 0.6 if willing else 0.4
+    else:
+        return 0.5 if willing else 0.15
+
+
+# ─────────────────────────────────────────────
+# COMPONENT 8: EDUCATION SCORE (0-1)
+# ─────────────────────────────────────────────
+def score_education(c):
+    edu = c.get("education", [])
+    if not edu:
+        return 0.5
+
+    tier_scores = {
+        "tier_1": 1.0, "tier_2": 0.8,
+        "tier_3": 0.6, "tier_4": 0.4, "unknown": 0.5,
+    }
+    best = max(tier_scores.get(e.get("tier", "unknown"), 0.5) for e in edu)
+    return best
+
+
+# ─────────────────────────────────────────────
+# NEW in v3: PROMOTION SCORE (0-1)
+# Captures career growth as a quality signal
+# ─────────────────────────────────────────────
+def promotion_score(c):
+    """
+    Detects career progression by counting senior-level ML/engineering titles.
+    FIX 3 (v4): Only counts promotions within ML/engineering tracks.
+    "Senior QA Engineer" or "Senior Consultant" no longer earns credit.
+    The job title must contain both a seniority keyword AND an engineering role keyword.
+    """
+    career = c.get("career_history", [])
+
+    if len(career) < 2:
+        return 0.5  # not enough history to judge = neutral
+
+    count = 0
+    for job in career:
+        title = job.get("title", "").lower()
+        has_seniority = any(x in title for x in SENIOR_TITLES)
+        has_ml_role   = any(x in title for x in ML_ENG_ROLE_KEYWORDS)
+        if has_seniority and has_ml_role:
+            count += 1
+
+    return min(count / 3.0, 1.0)
+
+
+# ─────────────────────────────────────────────
+# BEHAVIORAL MULTIPLIER (0.5-1.2)
+# ─────────────────────────────────────────────
+def behavioral_multiplier(c):
+    rs = c.get("redrob_signals", {})
+    multiplier = 1.0
+
+    # 1. Recency of activity
+    days_active = days_since(rs.get("last_active_date"))
+    if days_active <= 30:
+        multiplier *= 1.2
+    elif days_active <= 60:
+        multiplier *= 1.0
+    elif days_active <= 180:
+        multiplier *= 0.75
+    else:
+        multiplier *= 0.4
+
+    # 2. Open to work flag
+    if rs.get("open_to_work_flag"):
+        multiplier *= 1.1
+    else:
+        multiplier *= 0.85
+
+    # 3. Recruiter response rate
+    rr = rs.get("recruiter_response_rate", 0)
+    if rr >= 0.7:
+        multiplier *= 1.1
+    elif rr >= 0.4:
+        multiplier *= 1.0
+    elif rr >= 0.2:
+        multiplier *= 0.85
+    else:
+        multiplier *= 0.6
+
+    # 4. Notice period
+    notice = rs.get("notice_period_days", 90)
+    if notice <= 15:
+        multiplier *= 1.15
+    elif notice <= 30:
+        multiplier *= 1.05
+    elif notice <= 60:
+        multiplier *= 0.9
+    else:
+        multiplier *= 0.75
+
+    # 5. GitHub activity
+    github = rs.get("github_activity_score", -1)
+    if github >= 50:
+        multiplier *= 1.1
+    elif github >= 20:
+        multiplier *= 1.05
+    elif github == -1:
+        pass  # no GitHub info = no penalty
+    else:
+        multiplier *= 0.95
+
+    # 6. Interview completion rate
+    icr = rs.get("interview_completion_rate", 0.5)
+    if icr >= 0.8:
+        multiplier *= 1.05
+    elif icr < 0.4:
+        multiplier *= 0.9
+
+    # 7. NEW in v3: Saved by recruiters (recruiter-interest signal)
+    saved = rs.get("saved_by_recruiters_30d", 0)
+    if saved >= 20:
+        multiplier *= 1.15
+    elif saved >= 10:
+        multiplier *= 1.08
+
+    # 8. NEW in v3: Search appearance (platform visibility signal)
+    appearance = rs.get("search_appearance_30d", 0)
+    if appearance >= 200:
+        multiplier *= 1.05
+
+    # 9. NEW in v3: Promotion/career-growth bonus
+    promo = promotion_score(c)
+    if promo >= 0.8:
+        multiplier *= 1.1
+    elif promo >= 0.5:
+        multiplier *= 1.05
+
+    return max(0.5, min(multiplier, 1.2))
+    # FIX 5: floor raised from 0.2 → 0.5.
+    # A strong technical candidate who is inactive or has a long notice period
+    # should not be cut by more than 50%. The multiplier adjusts preference,
+    # not fundamental eligibility.
+
+
+# ─────────────────────────────────────────────
+# MAIN SCORING FUNCTION
+# ─────────────────────────────────────────────
+def score_candidate(c):
+    if is_honeypot(c):
+        return 0.01
+
+    career      = score_career(c)
+    description = score_description(c)
+    skills      = score_skills(c)
+    jd_fit      = score_jd_fit(c)
+    assessments = score_assessments(c)
+    experience  = score_experience(c)
+    location    = score_location(c)
+    education   = score_education(c)
+
+    base = (
+        WEIGHTS["career"]      * career +
+        WEIGHTS["description"] * description +
+        WEIGHTS["skills"]      * skills +
+        WEIGHTS["jd_fit"]      * jd_fit +
+        WEIGHTS["assessments"] * assessments +
+        WEIGHTS["experience"]  * experience +
+        WEIGHTS["location"]    * location +
+        WEIGHTS["education"]   * education
+    )
+
+    # v3: no hard clipping at 1.0; normalize across all candidates after sorting
+    final = base * behavioral_multiplier(c)
+    return round(final, 6)
+
+
+# ─────────────────────────────────────────────
+# REASONING GENERATOR
+# ─────────────────────────────────────────────
+def generate_reasoning(c, score):
+    p = get_profile(c)
+    rs = c.get("redrob_signals", {})
+    skills = c.get("skills", [])
+
+    title = p.get("current_title", "Unknown")
+    yoe = p.get("years_of_experience", 0)
+    notice = rs.get("notice_period_days", 90)
+    response_rate = rs.get("recruiter_response_rate", 0)
+    active_days = days_since(rs.get("last_active_date"))
+    open_to_work = rs.get("open_to_work_flag", False)
+    assessments = rs.get("skill_assessment_scores", {})
+    saved = rs.get("saved_by_recruiters_30d", 0)
+
+    # Top relevant skills
+    relevant = [
+        s["name"] for s in skills
+        if any(r in s["name"].lower() for r in REQUIRED_SKILLS | BONUS_SKILLS)
+        and s.get("duration_months", 0) > 6
+    ][:3]
+
+    # Top assessment scores
+    top_assessment = None
+    if assessments:
+        best = max(assessments.items(), key=lambda x: x[1])
+        if best[1] >= 70:
+            top_assessment = f"{best[0]}: {best[1]:.0f}/100"
+
+    # IDF-weighted JD fit score (v4)
+    jd_text = ""
+    for job in c.get("career_history", []):
+        jd_text += " " + job.get("description", "").lower()
+    for sk in skills:
+        jd_text += " " + sk.get("name", "").lower()
+    jd_weighted = sum(w for t, w in CORE_JD_TERMS.items() if t in jd_text)
+    jd_pct = min(jd_weighted / (CORE_JD_MAX * 0.45), 1.0)
+
+    parts = []
+    skill_str = ", ".join(relevant) if relevant else "limited relevant skills"
+    parts.append(f"{title} with {yoe:.1f} yrs; key skills: {skill_str}.")
+
+    if jd_pct >= 0.75:
+        parts.append(f"Strong JD alignment ({jd_pct:.0%} of weighted JD score).")
+    elif jd_pct >= 0.40:
+        parts.append(f"Partial JD alignment ({jd_pct:.0%} of weighted JD score).")
+
+    if top_assessment:
+        parts.append(f"Platform assessment: {top_assessment}.")
+
+    concerns = []
+    strengths = []
+
+    if notice > 60:
+        concerns.append(f"{notice}-day notice period")
+    if response_rate < 0.3:
+        concerns.append(f"low response rate ({response_rate:.0%})")
+    if active_days > 180:
+        concerns.append(f"inactive {active_days} days")
+    if not open_to_work:
+        concerns.append("not open to work")
+
+    if response_rate >= 0.7:
+        strengths.append(f"high response rate ({response_rate:.0%})")
+    if notice <= 30:
+        strengths.append(f"short notice ({notice}d)")
+    if rs.get("github_activity_score", -1) >= 50:
+        strengths.append("strong GitHub")
+    if saved >= 10:
+        strengths.append(f"saved by {saved} recruiters (30d)")
+
+    if concerns:
+        parts.append(f"Concerns: {'; '.join(concerns[:2])}.")
+    if strengths:
+        parts.append(f"Strengths: {'; '.join(strengths[:2])}.")
+
+    return " ".join(parts)
+
+
+# ─────────────────────────────────────────────
+# LOAD CANDIDATES
+# ─────────────────────────────────────────────
+def load_candidates(path):
+    candidates = []
+    skipped = 0
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                candidates.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                log.warning(f"Skipping malformed line {i}: {e}")
+                skipped += 1
+    log.info(f"Loaded {len(candidates):,} candidates ({skipped} skipped).")
+    return candidates
+
+
+# ─────────────────────────────────────────────
+# NORMALIZE SCORES (v3: replaces hard clip at 1.0)
+# ─────────────────────────────────────────────
+def normalize_scores(scored):
+    """
+    Min-max normalize so the top candidate gets 1.0.
+    Prevents many candidates from sharing the exact same capped score.
+    Honeypot candidates (score=0.01) are excluded from normalization range.
+    """
+    real_scores = [s for _, s in scored if s > 0.01]
+    if not real_scores:
+        return scored
+
+    max_score = max(real_scores)
+    min_score = min(real_scores)
+    score_range = max_score - min_score
+
+    if score_range < 1e-9:
+        return scored  # all scores identical — nothing to normalize
+
+    normalized = []
+    for c, s in scored:
+        if s <= 0.01:
+            normalized.append((c, s))  # keep honeypot score as-is
+        else:
+            norm = (s - min_score) / score_range
+            normalized.append((c, round(norm, 6)))
+
+    return normalized
+
+
+# ─────────────────────────────────────────────
+# PUBLIC API (used by app.py — same pipeline as CLI)
+# ─────────────────────────────────────────────
+def score_candidate_with_breakdown(c):
+    """Return raw score and per-component breakdown (pre-normalization)."""
+    if is_honeypot(c):
+        return 0.01, {"honeypot": True}
+
+    breakdown = {
+        "career":      score_career(c),
+        "description": score_description(c),
+        "skills":      score_skills(c),
+        "jd_fit":      score_jd_fit(c),
+        "assessments": score_assessments(c),
+        "experience":  score_experience(c),
+        "location":    score_location(c),
+        "education":   score_education(c),
+    }
+    base = sum(WEIGHTS[k] * breakdown[k] for k in WEIGHTS)
+    bm = behavioral_multiplier(c)
+    breakdown["behavioral_mult"] = bm
+    return round(base * bm, 6), breakdown
+
+
+def rank_candidates(candidates, ref_date=None):
+    """
+    Full scoring + min-max normalization pipeline — identical to main().
+    Returns sorted list of (candidate, normalized_score, breakdown).
+    """
+    global REFERENCE_DATE
+    if ref_date is not None:
+        REFERENCE_DATE = ref_date
+
+    scored = []
+    for c in candidates:
+        s, bd = score_candidate_with_breakdown(c)
+        scored.append((c, s, bd))
+
+    scored.sort(key=lambda x: (-x[1], x[0]["candidate_id"]))
+    normalized = normalize_scores([(c, s) for c, s, _ in scored])
+    norm_by_id = {c["candidate_id"]: s for c, s in normalized}
+
+    result = [(c, norm_by_id[c["candidate_id"]], bd) for c, _, bd in scored]
+    result.sort(key=lambda x: (-x[1], x[0]["candidate_id"]))
+    return result
+
+
+def build_submission_rows(ranked):
+    """Build CSV rows matching CLI output: header + top 100 data rows."""
+    rows = [["candidate_id", "rank", "score", "reasoning"]]
+    for rank, (c, score, _) in enumerate(ranked[:100], start=1):
+        rows.append([
+            c["candidate_id"],
+            rank,
+            f"{score:.6f}",
+            generate_reasoning(c, score),
+        ])
+    return rows
+
+
+# ─────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--candidates", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--ref-date",
+        default=None,
+        help="Fixed reference date for reproducibility (ISO format: YYYY-MM-DD). "
+             "Defaults to 2025-01-01 if not provided.",
+    )
+    args = parser.parse_args()
+
+    # FIX 1: Allow override of frozen reference date at runtime
+    if args.ref_date:
+        global REFERENCE_DATE
+        try:
+            REFERENCE_DATE = date.fromisoformat(args.ref_date)
+            log.info(f"Using reference date: {REFERENCE_DATE}")
+        except ValueError:
+            log.error(f"Invalid --ref-date format '{args.ref_date}'. Use YYYY-MM-DD.")
+            raise
+    else:
+        log.info(f"Using default reference date: {REFERENCE_DATE}")
+
+    candidates = load_candidates(args.candidates)
+
+    log.info("Scoring candidates...")
+    scored = rank_candidates(candidates, ref_date=REFERENCE_DATE)
+    top100 = scored[:100]
+
+    with open(args.out, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerows(build_submission_rows(scored))
+
+    log.info(f"Done! Written to {args.out}")
+    # Bug fix: guard against fewer than 100 candidates
+    if top100:
+        log.info(f"Top score: {top100[0][1]:.4f} | #{len(top100)} score: {top100[-1][1]:.4f}")
+
+
+if __name__ == "__main__":
+    main()
