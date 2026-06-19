@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
 """
 Redrob Hackathon — Candidate Ranker (v4)
-Improvements over v3:
-  - FIX 1: Frozen reference date (REFERENCE_DATE) for fully reproducible rankings
-  - FIX 2: IDF-weighted JD term matching — rare terms (ndcg, mrr) score higher than broad ones
-  - FIX 3: Promotion score restricted to ML/engineering title families only
-  - FIX 4: Assessment weight raised to 0.13; no-assessment candidates penalised (0.4) not neutral
-  - FIX 5: Behavioral multiplier capped at 0.5 downside (was 0.2) to protect strong tech candidates
-  - FIX 6: Consulting double-penalty removed — per-job penalty OR overall multiplier, not both
-  - FIX 7: Career normalization by total weighted months, not raw job count
-  - FIX 8: Honeypot expert-count check scales with years of experience
-Usage: python3 rank_v4.py --candidates candidates.jsonl --out submission.csv
-         [--ref-date 2025-01-01]   # optional fixed reference date (ISO format)
+
 """
 
 import json
