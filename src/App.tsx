@@ -626,6 +626,25 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [registeredUsers, setRegisteredUsers] = useState([{ email: 'agent@nexus.ai', name: 'Nexus Agent' }]);
   const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => {
+  const loadUser = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      setCurrentUser({
+        email: user.email,
+        name: user.email.split("@")[0],
+        initials: user.email.substring(0, 2).toUpperCase(),
+      });
+
+      setView("dashboard");
+    }
+  };
+
+  loadUser();
+}, []);
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
