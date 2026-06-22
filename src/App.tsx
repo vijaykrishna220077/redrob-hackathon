@@ -8,7 +8,8 @@ import {
   Upload, Download, Users, ShieldAlert, BarChart2, FileText, 
   CheckCircle, ChevronDown, ChevronUp, Calendar, Search, 
   Settings, Database, Zap, Cpu, Award, Sparkles,
-  ArrowRight, Briefcase, RefreshCw, Bell, Layout, Eye, LogOut, Check, X
+  ArrowRight, Briefcase, RefreshCw, Bell, Layout, Eye, LogOut, Check, X,
+  Mail, Lock, User, Key, ArrowLeft
 } from 'lucide-react';
 
 
@@ -52,8 +53,6 @@ const INDIA_METROS = ["pune", "noida", "delhi", "gurugram", "gurgaon", "bengalur
 const SENIOR_TITLES = ["senior", "lead", "staff", "principal"];
 const ML_ENG_ROLE_KEYWORDS = ["engineer", "scientist", "researcher", "developer", "ml", "ai", "nlp", "search", "ranking", "recommendation", "data", "backend", "platform", "infrastructure"];
 
-
-
 const daysSince = (dateStr, referenceDate) => {
   if (!dateStr) return 9999;
   try {
@@ -75,7 +74,7 @@ const isHoneypot = (c) => {
   const totalMonths = career.reduce((sum, j) => sum + (j.duration_months || 0), 0);
   if (yoe > 3 && totalMonths < yoe * 12 * 0.4) return true;
   const expertCount = skills.filter(s => s.proficiency === "expert").length;
-  const expertLimit = Math.max(12, Math.floor(yoe * 1.5));
+  const expertLimit = Math.max(12, Math.floor(yoe * 2));
   if (expertCount >= expertLimit) return true;
   if (yoe < 3 && expertCount > 8) return true;
   return false;
@@ -100,7 +99,7 @@ const scoreCareer = (c) => {
 
     let companyBonus = 0.0;
     const isConsulting = CONSULTING_COMPANIES.some(firm => company.includes(firm));
-    if (isConsulting) companyBonus = -0.3; 
+    if (isConsulting) companyBonus = -0.2; 
     else if (["software", "fintech", "saas", "ai", "ml", "food delivery", "ecommerce", "edtech"].includes(industry)) companyBonus = 0.3;
     else if (["51-200", "201-500", "501-1000"].includes(size)) companyBonus = 0.2;
 
@@ -151,9 +150,8 @@ const scoreJdFit = (c) => {
   for (const [term, weight] of Object.entries(CORE_JD_TERMS)) {
     if (text.includes(term)) weightedHits += weight;
   }
-  return Math.min(weightedHits / (CORE_JD_MAX * 0.45), 1.0);
+  return Math.min(weightedHits / (CORE_JD_MAX * 0.35), 1.0);
 };
-
 
 const scoreAssessments = (c) => {
   const assessments = (c.redrob_signals || {}).skill_assessment_scores || {};
@@ -271,7 +269,7 @@ const generateReasoning = (c, score, referenceDate) => {
   for (const [t, w] of Object.entries(CORE_JD_TERMS)) {
     if (jdText.includes(t)) jdWeighted += w;
   }
-  const jdPct = Math.min(jdWeighted / (CORE_JD_MAX * 0.45), 1.0);
+  const jdPct = Math.min(jdWeighted / (CORE_JD_MAX * 0.35), 1.0);
 
   const parts = [];
   parts.push(`${title} with ${yoe.toFixed(1)} yrs; key skills: ${relevant.length ? relevant.join(", ") : "limited relevant skills"}.`);
@@ -366,29 +364,33 @@ const INITIAL_CANDIDATES = [
 ];
 
 
-// Mixed Aesthetic Components: Digital Playground Elements
-const BrutalButton = ({ children, onClick, className = "", variant = "primary", disabled = false }) => {
-  const base = "font-bold py-3 px-6 rounded-xl border-2 border-slate-900 transition-all flex items-center justify-center gap-2";
-  const active = disabled ? "opacity-50 cursor-not-allowed" : "hover:-translate-y-0.5 hover:-translate-x-0.5 hover:shadow-[5px_5px_0px_0px_#0f172a] active:translate-y-1 active:translate-x-1 active:shadow-none shadow-[3px_3px_0px_0px_#0f172a]";
+// ==========================================
+// NEO-BRUTALIST COMPONENTS
+// ==========================================
+
+const BrutalButton = ({ children, onClick, className = "", variant = "primary", disabled = false, type="button" }) => {
+  const base = "font-bold py-3 px-6 rounded-xl border-4 border-slate-900 transition-all flex items-center justify-center gap-2";
+  const active = disabled ? "opacity-50 cursor-not-allowed" : "hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_0px_#0f172a] active:translate-y-1 active:translate-x-1 active:shadow-none shadow-[4px_4px_0px_0px_#0f172a]";
   
   const variants = {
     primary: "bg-blue-500 text-white",
     secondary: "bg-white text-slate-900",
-    outline: "bg-transparent text-slate-900",
+    outline: "bg-transparent text-slate-900 border-2",
     success: "bg-emerald-400 text-slate-900",
     purple: "bg-purple-500 text-white",
-    yellow: "bg-yellow-300 text-slate-900"
+    yellow: "bg-yellow-300 text-slate-900",
+    pink: "bg-pink-500 text-white"
   };
 
   return (
-    <button disabled={disabled} onClick={onClick} className={`${base} ${active} ${variants[variant]} ${className}`}>
+    <button type={type} disabled={disabled} onClick={onClick} className={`${base} ${active} ${variants[variant]} ${className}`}>
       {children}
     </button>
   );
 };
 
 const CleanCard = ({ children, className = "" }) => (
-  <div className={`bg-white border-2 border-slate-900 rounded-2xl shadow-[4px_4px_0px_0px_#0f172a] ${className}`}>
+  <div className={`bg-white border-4 border-slate-900 rounded-2xl shadow-[6px_6px_0px_0px_#0f172a] ${className}`}>
     {children}
   </div>
 );
@@ -396,7 +398,7 @@ const CleanCard = ({ children, className = "" }) => (
 const StatCard = ({ title, value, sub, icon: Icon, trend }) => (
   <motion.div 
     whileHover={{ y: -4, x: -4, shadow: "8px 8px 0px 0px #0f172a" }}
-    className="bg-white border-2 border-slate-900 p-6 rounded-2xl shadow-[4px_4px_0px_0px_#0f172a] transition-all"
+    className="bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[4px_4px_0px_0px_#0f172a] transition-all"
   >
     <div className="flex justify-between items-start mb-4">
       <div className="w-12 h-12 bg-yellow-300 border-2 border-slate-900 text-slate-900 rounded-xl flex items-center justify-center shadow-[2px_2px_0px_0px_#0f172a]">
@@ -431,7 +433,6 @@ const ProgressBar = ({ label, value, colorClass = "bg-blue-500" }) => (
   </div>
 );
 
-// Toast Notification Component
 const Toast = ({ message, type, onClose }) => {
   useEffect(() => {
     const timer = setTimeout(onClose, 4000);
@@ -445,7 +446,7 @@ const Toast = ({ message, type, onClose }) => {
       initial={{ opacity: 0, y: 50, scale: 0.9 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-      className={`fixed bottom-6 right-6 ${bg} text-slate-900 border-2 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] px-6 py-4 rounded-2xl flex items-center gap-3 z-50`}
+      className={`fixed bottom-6 right-6 ${bg} text-slate-900 border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] px-6 py-4 rounded-2xl flex items-center gap-3 z-50`}
     >
       {type === 'error' ? <ShieldAlert size={20} className="shrink-0" /> : <CheckCircle size={20} className="shrink-0" />}
       <span className="font-bold text-sm">{message}</span>
@@ -454,21 +455,214 @@ const Toast = ({ message, type, onClose }) => {
   );
 };
 
+// ==========================================
+// AUTHENTICATION VIEWS (NEO-BRUTALIST)
+// ==========================================
 
+const AuthInput = ({ label, type = "text", placeholder, icon: Icon, name }) => (
+  <div className="space-y-2 mb-5 w-full text-left">
+    <label className="font-black text-sm uppercase tracking-wider text-slate-700">{label}</label>
+    <div className="relative">
+      {Icon && <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />}
+      <input 
+        name={name}
+        type={type} 
+        placeholder={placeholder} 
+        className={`w-full bg-white border-4 border-slate-900 rounded-xl py-3.5 px-4 focus:outline-none focus:ring-4 focus:ring-yellow-300 transition-all font-bold text-slate-900 placeholder:text-slate-400 shadow-[4px_4px_0px_0px_#0f172a] ${Icon ? 'pl-12' : ''}`} 
+        required
+      />
+    </div>
+  </div>
+);
+
+const AuthLayout = ({ children, title, subtitle, setView }) => (
+  <div className="min-h-screen flex text-slate-900 font-sans selection:bg-blue-300 bg-[#f8fafc] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:24px_24px]">
+    <button 
+      onClick={() => setView('landing')} 
+      className="absolute top-6 left-6 flex items-center gap-2 font-black uppercase tracking-widest text-sm text-slate-600 hover:text-slate-900 transition-colors z-20"
+    >
+      <ArrowLeft size={20} /> Back
+    </button>
+    
+    {/* Left Side - Graphic (Hidden on mobile) */}
+    <div className="hidden lg:flex w-1/2 bg-blue-500 border-r-4 border-slate-900 flex-col justify-center items-center p-12 relative overflow-hidden">
+       {/* Background pattern */}
+       <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#000_2px,transparent_2px)] [background-size:20px_20px]" />
+       
+       <div className="relative z-10 text-center space-y-6 max-w-lg">
+          <div className="w-24 h-24 bg-yellow-300 rounded-3xl flex items-center justify-center border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] mx-auto mb-8 transform -rotate-6 hover:rotate-0 transition-transform">
+             <Cpu size={48} className="text-slate-900" />
+          </div>
+          <h1 className="text-5xl xl:text-6xl font-black tracking-tighter text-white drop-shadow-[4px_4px_0px_#0f172a] leading-tight">
+             Unlock the <br/>
+             <span className="text-yellow-300">Engine.</span>
+          </h1>
+          <p className="text-lg font-bold text-blue-100 border-l-4 border-pink-400 pl-4 text-left">
+             Access the V4 scoring model. Manage candidate pipelines, deploy configurations, and export parity-locked telemetry.
+          </p>
+       </div>
+
+       {/* Floating decorations */}
+       <div className="absolute top-20 right-20 w-16 h-16 bg-pink-500 rounded-full border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] animate-bounce" style={{ animationDuration: '3s' }} />
+       <div className="absolute bottom-20 left-20 w-20 h-20 bg-emerald-400 border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform rotate-12" />
+    </div>
+
+    {/* Right Side - Form */}
+    <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-white p-8 sm:p-10 rounded-3xl border-4 border-slate-900 shadow-[12px_12px_0px_0px_#0f172a]"
+      >
+        <div className="mb-10 text-center">
+          <h2 className="text-4xl font-black tracking-tighter text-slate-900 mb-2 uppercase">{title}</h2>
+          <p className="text-slate-500 font-bold">{subtitle}</p>
+        </div>
+        {children}
+      </motion.div>
+    </div>
+  </div>
+);
+
+const LoginView = ({ setView, onLogin }) => (
+  <AuthLayout title="Welcome Back" subtitle="Enter your credentials to access the workspace." setView={setView}>
+    <form onSubmit={(e) => { 
+      e.preventDefault(); 
+      const formData = new FormData(e.currentTarget);
+      onLogin(formData.get('email'), formData.get('password')); 
+    }}>
+      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+      <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
+      
+      <div className="flex items-center justify-between mt-2 mb-8">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 border-4 border-slate-900 rounded bg-white text-blue-500 focus:ring-yellow-300 focus:ring-offset-0 transition-all checked:bg-blue-500" />
+          <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">Remember Me</span>
+        </label>
+        <button type="button" onClick={() => setView('forgotPassword')} className="text-sm font-black text-pink-500 hover:text-pink-600 hover:underline uppercase tracking-wider transition-colors">
+          Lost Key?
+        </button>
+      </div>
+
+      <BrutalButton type="submit" variant="primary" className="w-full py-4 text-lg">
+        Initialize Session <ArrowRight size={24} />
+      </BrutalButton>
+    </form>
+
+    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+      <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+        No clearance?{' '}
+        <button type="button" onClick={() => setView('signup')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
+          Request Access
+        </button>
+      </p>
+    </div>
+  </AuthLayout>
+);
+
+const SignupView = ({ setView, onSignup }) => (
+  <AuthLayout title="Create Profile" subtitle="Register a new operator identity." setView={setView}>
+    <form onSubmit={(e) => { 
+      e.preventDefault(); 
+      const formData = new FormData(e.currentTarget);
+      onSignup(formData.get('fullName'), formData.get('email'), formData.get('password')); 
+    }}>
+      <AuthInput name="fullName" label="Full Name" type="text" placeholder="Jane Doe" icon={User} />
+      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+      <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
+      
+      <BrutalButton type="submit" variant="pink" className="w-full py-4 text-lg mt-6">
+        Generate Identity <Zap size={24} />
+      </BrutalButton>
+    </form>
+
+    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+      <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+        Already registered?{' '}
+        <button type="button" onClick={() => setView('login')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
+          Return to Login
+        </button>
+      </p>
+    </div>
+  </AuthLayout>
+);
+
+const ForgotPasswordView = ({ setView }) => (
+  <AuthLayout title="System Reset" subtitle="We'll send a recovery link to your terminal." setView={setView}>
+    <form onSubmit={(e) => { e.preventDefault(); setView('login'); }}>
+      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+      <BrutalButton type="submit" variant="yellow" className="w-full py-4 text-lg mt-6">
+        Transmit Link <ArrowRight size={24} />
+      </BrutalButton>
+    </form>
+    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+      <button type="button" onClick={() => setView('login')} className="text-sm font-black text-slate-600 hover:text-slate-900 uppercase tracking-wider hover:underline transition-colors">
+        Cancel Reset Sequence
+      </button>
+    </div>
+  </AuthLayout>
+);
+
+// ==========================================
+// MAIN APPLICATION ENTRY
+// ==========================================
 
 export default function App() {
+  // Navigation State: 'landing', 'login', 'signup', 'forgotPassword', 'dashboard'
   const [view, setView] = useState('landing');
   const [activeTab, setActiveTab] = useState('dashboard'); 
-  const [sidebarOpen, setSidebarOpen] = useState(true); // Fixed ReferenceError
+  const [sidebarOpen, setSidebarOpen] = useState(true); 
   const [candidates, setCandidates] = useState(INITIAL_CANDIDATES);
   const [refDateString, setRefDateString] = useState("2025-01-01");
   const [searchQuery, setSearchQuery] = useState("");
   const [comparisonMode, setComparisonMode] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
-  const [toast, setToast] = useState(null); // Fixed alert replacement
+  const [toast, setToast] = useState(null); 
+  const [isUploading, setIsUploading] = useState(false);
+
+  // --- AUTH STATE & POPUP ---
+  const [currentUser, setCurrentUser] = useState(null);
+  const [registeredUsers, setRegisteredUsers] = useState([{ email: 'agent@nexus.ai', name: 'Nexus Agent' }]);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const showToast = (message, type = 'success') => setToast({ message, type });
+
+  const getInitials = (name) => {
+    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '??';
+  };
+
+  const handleLogin = (email, password) => {
+    if (!email || !password) {
+      showToast("Please provide both email and password.", "error");
+      return;
+    }
+    const user = registeredUsers.find(u => u.email === email);
+    if (user) {
+      setCurrentUser({ ...user, initials: getInitials(user.name) });
+      setView('dashboard');
+      showToast(`Welcome back, ${user.name}`);
+    } else {
+      showToast("Unregistered identity. Please click 'Request Access' below to register.", "error");
+    }
+  };
+
+  const handleSignup = (name, email, password) => {
+    if (!name || !email || !password) {
+      showToast("Please fill out all identity fields.", "error");
+      return;
+    }
+    const existing = registeredUsers.find(u => u.email === email);
+    if (existing) {
+      showToast("Identity already exists. Please return to login.", "error");
+    } else {
+      const newUser = { email, name };
+      setRegisteredUsers([...registeredUsers, newUser]);
+      setCurrentUser({ ...newUser, initials: getInitials(name) });
+      setView('dashboard');
+      showToast("Identity generated successfully.");
+    }
+  };
 
   const referenceDate = useMemo(() => {
     const parts = refDateString.split("-");
@@ -501,35 +695,40 @@ export default function App() {
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    setIsUploading(true);
+
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target.result;
-      let parsed = [];
-      try {
-        const data = JSON.parse(text);
-        parsed = Array.isArray(data) ? data : [data];
-      } catch (err) {
-        const lines = text.split(/\r?\n/); // Handle Windows and Unix line endings
-        for (const line of lines) {
-          if (line.trim()) {
-            try { 
-              parsed.push(JSON.parse(line)); 
-            } catch (e) {
-              console.warn("Skipping invalid JSON line:", line);
+      // Yield to main thread to allow "Processing..." UI to render
+      setTimeout(() => {
+        const text = event.target.result;
+        let parsed = [];
+        try {
+          const data = JSON.parse(text);
+          parsed = Array.isArray(data) ? data : [data];
+        } catch (err) {
+          const lines = text.split(/\r?\n/); 
+          for (const line of lines) {
+            if (line.trim()) {
+              try { 
+                parsed.push(JSON.parse(line)); 
+              } catch (e) {
+                console.warn("Skipping invalid JSON line:", line);
+              }
             }
           }
         }
-      }
-      if (parsed.length > 0) {
-        setCandidates(parsed);
-        showToast(`Successfully loaded ${parsed.length} candidates.`);
-      } else {
-        showToast("No valid JSON candidates found in file.", "error");
-      }
+        if (parsed.length > 0) {
+          setCandidates(parsed);
+          showToast(`Successfully loaded ${parsed.length} candidates.`);
+        } else {
+          showToast("No valid JSON candidates found in file.", "error");
+        }
+        setIsUploading(false);
+      }, 50);
     };
     reader.readAsText(file);
-    
-    // Clear the input value so the same file can be uploaded again if needed
     e.target.value = null; 
   };
 
@@ -589,103 +788,13 @@ export default function App() {
     backgroundSize: '24px 24px'
   };
 
-
-  if (view === 'landing') {
-    return (
-      <div className="min-h-screen text-slate-900 font-sans selection:bg-blue-300 relative overflow-hidden" style={dottedGrid}>
-        
-        {/* Toast Notifications */}
-        <AnimatePresence>
-          {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        </AnimatePresence>
-
-        {/* Navigation - Neo-Brutalist */}
-        <nav className="fixed top-6 inset-x-0 mx-auto w-[95%] max-w-6xl bg-white border-4 border-slate-900 rounded-2xl px-6 py-4 flex justify-between items-center z-50 shadow-[8px_8px_0px_0px_#0f172a]">
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-yellow-300 rounded-xl flex items-center justify-center border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">
-                    <Cpu size={24} className="text-slate-900" />
-                </div>
-                <span className="font-black text-2xl tracking-tighter uppercase">Nexus AI</span>
-            </div>
-            <div className="hidden md:flex gap-8 text-sm font-black uppercase tracking-widest text-slate-600">
-                <button className="hover:text-blue-600 hover:-translate-y-1 transition-all">Platform</button>
-                <button className="hover:text-pink-500 hover:-translate-y-1 transition-all">Engine</button>
-            </div>
-            <BrutalButton onClick={() => setView('dashboard')} variant="primary" className="py-2.5 px-6 text-sm">
-                Enter Workspace
-            </BrutalButton>
-        </nav>
-
-        {/* Hero Section */}
-        <section className="relative pt-48 pb-20 px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16 min-h-screen">
-            <div className="flex-1 space-y-8 z-10 text-center lg:text-left">
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-pink-300 border-2 border-slate-900 rounded-xl font-black text-xs uppercase tracking-widest text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform -rotate-2">
-                    <Sparkles size={16} /> Parity Lock V4 Active
-                </div>
-                
-                <h1 className="text-6xl sm:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] text-slate-900 drop-shadow-md">
-                  Precision <br/>
-                  <span className="text-blue-600 inline-block mt-2">Talent Routing.</span>
-                </h1>
-                
-                <p className="text-xl font-bold text-slate-600 max-w-xl mx-auto lg:mx-0 border-l-4 border-yellow-300 pl-4">
-                    The intelligence of a massive SaaS platform wrapped in a tactile, responsive workspace. 100% logic alignment with offline predictive models.
-                </p>
-                
-                <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start pt-6">
-                    <BrutalButton onClick={() => setView('dashboard')} variant="primary" className="text-xl py-4 px-8">
-                        Launch Dashboard <ArrowRight size={24} />
-                    </BrutalButton>
-                    <BrutalButton onClick={seedMoreCandidates} variant="yellow" className="text-lg py-4 px-8">
-                        <Database size={20} /> Load Mock Data
-                    </BrutalButton>
-                </div>
-            </div>
-
-            {/* Floating UI Elements (Playground Vibe) */}
-            <div className="flex-1 relative w-full h-[500px] hidden lg:block perspective-1000">
-                <motion.div 
-                  animate={{ y: [0, -15, 0], rotate: [3, 5, 3] }} 
-                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute top-10 right-10 bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[12px_12px_0px_0px_#0f172a] w-80 z-20"
-                >
-                  <div className="flex justify-between items-center mb-6 border-b-4 border-slate-900 pb-4">
-                    <span className="font-black text-sm uppercase text-slate-900 tracking-wider">Live Evaluation</span>
-                    <span className="w-4 h-4 bg-emerald-400 rounded-full animate-pulse border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]" />
-                  </div>
-                  <div className="space-y-4">
-                    {rankedData.slice(0, 2).map((c, i) => (
-                      <div key={i} className="flex justify-between items-center bg-slate-100 p-3 rounded-xl border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">
-                        <span className="font-bold text-sm text-slate-800 truncate max-w-[150px]">{c.rawProfile.profile?.current_title}</span>
-                        <span className="font-black text-blue-600 bg-blue-100 px-2 py-1 rounded-md border border-blue-200">{c.score.toFixed(3)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-
-                <motion.div 
-                  animate={{ y: [0, 15, 0], rotate: [-6, -4, -6] }} 
-                  transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-                  className="absolute bottom-20 left-10 bg-purple-500 text-white border-4 border-slate-900 p-6 rounded-2xl shadow-[12px_12px_0px_0px_#0f172a] w-64 z-10"
-                >
-                   <Award size={40} className="mb-4 text-yellow-300" />
-                   <h3 className="font-black text-2xl mb-2 tracking-tight">Zero Bias</h3>
-                   <p className="text-sm font-bold opacity-90 leading-tight">Anonymized, skill-centric evaluation vectors running locally.</p>
-                </motion.div>
-            </div>
-        </section>
-      </div>
-    );
-  }
-
-
   const NavItem = ({ id, label, icon: Icon }) => (
     <button 
       onClick={() => setActiveTab(id)} 
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-black text-sm uppercase tracking-wider
         ${activeTab === id 
-          ? 'bg-blue-500 text-white border-2 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] translate-x-1' 
-          : 'bg-white text-slate-600 border-2 border-transparent hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a] hover:text-slate-900 hover:-translate-y-1'
+          ? 'bg-blue-500 text-white border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] translate-x-1' 
+          : 'bg-white text-slate-600 border-4 border-transparent hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a] hover:text-slate-900 hover:-translate-y-1'
         }
       `}
     >
@@ -694,344 +803,560 @@ export default function App() {
     </button>
   );
 
+  // --- ROUTING RENDERER ---
+  const renderContent = () => {
+    if (view === 'login') return <LoginView setView={setView} onLogin={handleLogin} />;
+    if (view === 'signup') return <SignupView setView={setView} onSignup={handleSignup} />;
+    if (view === 'forgotPassword') return <ForgotPasswordView setView={setView} />;
+
+    if (view === 'landing') {
+      return (
+        <div className="min-h-screen text-slate-900 font-sans selection:bg-blue-300 relative overflow-hidden" style={dottedGrid}>
+          
+          {/* Navigation - Neo-Brutalist */}
+          <nav className="fixed top-6 inset-x-0 mx-auto w-[95%] max-w-6xl bg-white border-4 border-slate-900 rounded-2xl px-6 py-4 flex justify-between items-center z-50 shadow-[8px_8px_0px_0px_#0f172a]">
+              <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-yellow-300 rounded-xl flex items-center justify-center border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                      <Cpu size={24} className="text-slate-900" />
+                  </div>
+                  <span className="font-black text-2xl tracking-tighter uppercase">Nexus AI</span>
+              </div>
+              <div className="hidden md:flex gap-8 text-sm font-black uppercase tracking-widest text-slate-600">
+                  <button className="hover:text-blue-600 hover:-translate-y-1 transition-all">Platform</button>
+                  <button className="hover:text-pink-500 hover:-translate-y-1 transition-all">Engine</button>
+              </div>
+              <BrutalButton type="button" onClick={() => setView('login')} variant="primary" className="py-2.5 px-6 text-sm">
+                  Login / Enter
+              </BrutalButton>
+          </nav>
+
+          {/* Hero Section */}
+          <section className="relative pt-48 pb-20 px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16 min-h-screen">
+              <div className="flex-1 space-y-8 z-10 text-center lg:text-left">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-pink-300 border-4 border-slate-900 rounded-xl font-black text-xs uppercase tracking-widest text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform -rotate-2">
+                      <Sparkles size={16} /> Parity Lock V4 Active
+                  </div>
+                  
+                  <h1 className="text-6xl sm:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] text-slate-900 drop-shadow-md">
+                    Precision <br/>
+                    <span className="text-blue-600 inline-block mt-2">Talent Routing.</span>
+                  </h1>
+                  
+                  <p className="text-xl font-bold text-slate-600 max-w-xl mx-auto lg:mx-0 border-l-4 border-yellow-300 pl-4">
+                      The intelligence of a massive SaaS platform wrapped in a tactile, responsive workspace. 100% logic alignment with offline predictive models.
+                  </p>
+                  
+                  <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start pt-6">
+                      <BrutalButton type="button" onClick={() => setView('login')} variant="primary" className="text-xl py-4 px-8">
+                          Launch Dashboard <ArrowRight size={24} />
+                      </BrutalButton>
+                      <BrutalButton type="button" onClick={seedMoreCandidates} variant="yellow" className="text-lg py-4 px-8">
+                          <Database size={20} /> Load Mock Data
+                      </BrutalButton>
+                  </div>
+              </div>
+
+              {/* Floating UI Elements */}
+              <div className="flex-1 relative w-full h-[500px] hidden lg:block perspective-1000">
+                  <motion.div 
+                    animate={{ y: [0, -15, 0], rotate: [3, 5, 3] }} 
+                    transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                    className="absolute top-10 right-10 bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[12px_12px_0px_0px_#0f172a] w-80 z-20"
+                  >
+                    <div className="flex justify-between items-center mb-6 border-b-4 border-slate-900 pb-4">
+                      <span className="font-black text-sm uppercase text-slate-900 tracking-wider">Live Evaluation</span>
+                      <span className="w-4 h-4 bg-emerald-400 rounded-full animate-pulse border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]" />
+                    </div>
+                    <div className="space-y-4">
+                      {rankedData.slice(0, 2).map((c, i) => (
+                        <div key={i} className="flex justify-between items-center bg-slate-100 p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                          <span className="font-bold text-sm text-slate-800 truncate max-w-[150px]">{c.rawProfile.profile?.current_title}</span>
+                          <span className="font-black text-blue-600 bg-blue-100 px-2 py-1 rounded-md border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">{c.score.toFixed(3)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+
+                  <motion.div 
+                    animate={{ y: [0, 15, 0], rotate: [-6, -4, -6] }} 
+                    transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+                    className="absolute bottom-20 left-10 bg-purple-500 text-white border-4 border-slate-900 p-6 rounded-2xl shadow-[12px_12px_0px_0px_#0f172a] w-64 z-10"
+                  >
+                     <Award size={40} className="mb-4 text-yellow-300" />
+                     <h3 className="font-black text-2xl mb-2 tracking-tight">Zero Bias</h3>
+                     <p className="text-sm font-bold opacity-90 leading-tight">Anonymized, skill-centric evaluation vectors running locally.</p>
+                  </motion.div>
+              </div>
+          </section>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen text-slate-900 font-sans flex overflow-hidden selection:bg-blue-300" style={dottedGrid}>
+        
+        {/* Floating Sidebar (Neo-Brutalist) */}
+        <div className={`p-4 transition-all duration-300 ${sidebarOpen ? 'w-72' : 'w-24 shrink-0'}`}>
+          <aside className="bg-white border-4 border-slate-900 h-full rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] flex flex-col z-20 overflow-hidden relative">
+            
+            <div className="h-24 flex items-center px-6 justify-between shrink-0 border-b-4 border-slate-900 bg-yellow-300">
+              <div className="flex items-center gap-3 overflow-hidden">
+                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0 border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                  <Cpu size={24} className="text-slate-900" />
+                </div>
+                {sidebarOpen && <span className="font-black text-xl tracking-tighter uppercase whitespace-nowrap text-slate-900">Nexus AI</span>}
+              </div>
+            </div>
+            
+            <nav className="flex-1 py-6 px-4 space-y-3 overflow-y-auto">
+              <NavItem id="dashboard" label="Overview" icon={Layout} />
+              <NavItem id="candidates" label="Shortlist" icon={Users} />
+              <NavItem id="settings" label="Parameters" icon={Settings} />
+            </nav>
+
+            <div className="p-4 shrink-0 border-t-4 border-slate-900 bg-slate-100">
+              <button onClick={() => { setView('landing'); setCurrentUser(null); }} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:text-white bg-white hover:bg-rose-500 rounded-xl transition-all font-black text-sm uppercase tracking-wider border-4 border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a]">
+                <LogOut size={20} className="shrink-0" />
+                {sidebarOpen && <span className="whitespace-nowrap">Sign Out</span>}
+              </button>
+            </div>
+          </aside>
+        </div>
+
+        {/* Main Content Area */}
+        <main className="flex-1 flex flex-col h-screen overflow-hidden pt-4 pr-4 pb-4">
+          
+          {/* Top Floating Navbar */}
+          <header className="h-20 bg-white border-4 border-slate-900 rounded-2xl px-6 flex items-center justify-between z-10 shrink-0 shadow-[8px_8px_0px_0px_#0f172a] mb-6">
+            <div className="flex items-center gap-6 flex-1 min-w-0">
+              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="w-10 h-10 bg-slate-100 border-4 border-slate-900 rounded-xl flex items-center justify-center hover:bg-yellow-300 hover:shadow-[4px_4px_0px_0px_#0f172a] transition-all shrink-0 active:translate-y-1 active:shadow-none">
+                <Layout size={20} className="text-slate-900" />
+              </button>
+              <div className="relative max-w-md w-full hidden md:block group">
+                <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                <input 
+                  type="text" 
+                  placeholder="Query profiles by ID, text..." 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-100 border-4 border-slate-900 focus:bg-white text-sm rounded-xl pl-12 pr-4 py-3 text-slate-900 placeholder-slate-500 font-bold focus:outline-none transition-all shadow-[4px_4px_0px_0px_#0f172a]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 shrink-0">
+              <div className="flex items-center gap-2 bg-pink-200 border-4 border-slate-900 px-4 py-2 rounded-xl shadow-[4px_4px_0px_0px_#0f172a]">
+                <Calendar size={18} className="text-slate-900" />
+                <input type="date" value={refDateString} onChange={e => setRefDateString(e.target.value)} className="bg-transparent border-none text-sm text-slate-900 font-black focus:outline-none tracking-wider" />
+              </div>
+              
+              <div className="relative">
+                <div 
+                  onClick={() => setProfileOpen(!profileOpen)}
+                  className="w-12 h-12 rounded-xl bg-purple-500 border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex items-center justify-center font-black text-white cursor-pointer hover:-translate-y-1 transition-transform"
+                >
+                  {currentUser?.initials || 'AD'}
+                </div>
+
+                <AnimatePresence>
+                  {profileOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setProfileOpen(false)} />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute right-0 top-16 w-64 bg-white border-4 border-slate-900 rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] z-50 overflow-hidden flex flex-col"
+                      >
+                        <div className="p-4 border-b-4 border-slate-900 bg-yellow-300">
+                          <p className="font-black text-slate-900 truncate">{currentUser?.name || 'Admin User'}</p>
+                          <p className="text-xs font-bold text-slate-600 truncate">{currentUser?.email || 'admin@nexus.ai'}</p>
+                        </div>
+                        <div className="p-2 bg-slate-50">
+                           <button onClick={() => { setProfileOpen(false); setActiveTab('profile'); }} className="w-full text-left px-4 py-2 font-bold text-sm text-slate-700 hover:bg-slate-200 hover:text-slate-900 rounded-lg transition-colors">View Profile</button>
+                           <button onClick={() => { setProfileOpen(false); setActiveTab('settings'); }} className="w-full text-left px-4 py-2 font-bold text-sm text-slate-700 hover:bg-slate-200 hover:text-slate-900 rounded-lg transition-colors">Account Settings</button>
+                        </div>
+                        <div className="p-2 border-t-4 border-slate-900 bg-rose-100">
+                          <button 
+                            onClick={() => { setProfileOpen(false); setCurrentUser(null); setView('landing'); }}
+                            className="w-full flex items-center gap-2 px-4 py-2 font-black text-sm text-rose-600 hover:bg-rose-200 rounded-lg transition-colors"
+                          >
+                            <LogOut size={16} /> Sign Out
+                          </button>
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+          </header>
+
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-10">
+            <AnimatePresence mode="wait">
+              
+              {/* --- DASHBOARD TAB --- */}
+              {activeTab === 'dashboard' && (
+                <motion.div key="dashboard" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-6xl mx-auto">
+                  <div>
+                    <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">System Overview</h1>
+                    <p className="text-slate-500 font-bold mt-2 text-lg">Executing offline Python v4 logic securely in browser.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <StatCard title="Processed" value={stats.total} sub="Local index" icon={Database} />
+                    <StatCard title="Valid" value={stats.valid} sub="Passed honeypots" icon={CheckCircle} trend={1} />
+                    <StatCard title="Trapped" value={stats.honeypots} sub="Rules triggered" icon={ShieldAlert} />
+                    <StatCard title="Avg Score" value={stats.avgScore} sub="Pool quality" icon={Award} trend={1} />
+                  </div>
+
+                  <div className="grid lg:grid-cols-3 gap-6">
+                    {/* Action Panel */}
+                    <CleanCard className="lg:col-span-2 p-8 flex flex-col justify-between bg-emerald-50">
+                      <div>
+                        <h3 className="text-3xl font-black text-slate-900 mb-2 uppercase tracking-tighter flex items-center gap-3">
+                          <Zap size={32} className="text-emerald-500 fill-emerald-500"/> Pipeline Controls
+                        </h3>
+                        <p className="text-sm font-bold text-slate-600 mb-8 max-w-md">Deploy configuration matrices. Upload JSONL structures to execute strict parity scoring locally.</p>
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-4">
+                        <label className={`cursor-pointer font-bold py-3 px-6 rounded-xl border-4 border-slate-900 transition-all flex items-center justify-center gap-2 ${isUploading ? 'bg-slate-400 text-slate-800 opacity-70 cursor-wait' : 'bg-blue-500 text-white hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_0px_#0f172a] active:translate-y-1 active:translate-x-1 active:shadow-none shadow-[4px_4px_0px_0px_#0f172a]'}`}>
+                           {isUploading ? <RefreshCw size={20} className="animate-spin" /> : <Upload size={20} />} 
+                           {isUploading ? "Processing..." : "Upload JSONL"}
+                           <input type="file" accept=".jsonl,.json,.txt" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
+                        </label>
+                        <BrutalButton onClick={downloadSubmissionCsv} variant="secondary" className="py-4">
+                          <Download size={20} /> Export Filtered CSV
+                        </BrutalButton>
+                      </div>
+                    </CleanCard>
+
+                    {/* Config Snapshot */}
+                    <CleanCard className="p-8 bg-blue-50">
+                      <h3 className="text-sm font-black text-blue-600 uppercase tracking-widest mb-6 pb-4 border-b-4 border-slate-900">Math Weights</h3>
+                      <div className="space-y-4 font-black text-sm">
+                        <div className="flex justify-between text-slate-700"><span className="uppercase">Skills</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">22%</span></div>
+                        <div className="flex justify-between text-slate-700"><span className="uppercase">Career</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">19%</span></div>
+                        <div className="flex justify-between text-slate-700"><span className="uppercase">JD Fit</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">15%</span></div>
+                        <div className="flex justify-between text-slate-700"><span className="uppercase">Assessments</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">13%</span></div>
+                        <div className="pt-4 mt-4 border-t-4 border-slate-900 flex justify-between text-slate-700">
+                          <span className="uppercase mt-1">Clamp limits</span><span className="text-purple-600 bg-white border-4 border-slate-900 px-2 py-1 rounded-md shadow-[4px_4px_0px_0px_#0f172a]">[0.5, 1.2]</span>
+                        </div>
+                      </div>
+                    </CleanCard>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* --- CANDIDATES TAB --- */}
+              {activeTab === 'candidates' && (
+                <motion.div key="candidates" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6 max-w-7xl mx-auto">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                    <div>
+                      <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Candidate Index</h1>
+                      <p className="text-slate-500 font-bold mt-2 text-lg">Select any row to view expanded math telemetry.</p>
+                    </div>
+                    <div className="flex bg-white p-2 rounded-xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] shrink-0 gap-2">
+                      <button onClick={() => setComparisonMode(false)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${!comparisonMode ? 'bg-blue-500 text-white shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Standard UI</button>
+                      <button onClick={() => setComparisonMode(true)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${comparisonMode ? 'bg-pink-400 text-slate-900 shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Hacker Grid</button>
+                    </div>
+                  </div>
+
+                  <CleanCard className="overflow-hidden p-0 border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] bg-white">
+                    <div className="overflow-x-auto">
+                      {!comparisonMode ? (
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="bg-slate-100 border-b-4 border-slate-900">
+                              <th className="p-3 sm:p-5 w-24 text-center font-black text-sm uppercase tracking-widest text-slate-900">Rank</th>
+                              <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900">Identity</th>
+                              <th className="p-3 sm:p-5 w-32 font-black text-sm uppercase tracking-widest text-slate-900">Score</th>
+                              <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900 hidden md:table-cell">Reasoning Log</th>
+                              <th className="p-3 sm:p-5 w-20 text-center"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y-4 divide-slate-100">
+                            {filteredRankedData.slice(0, 100).map((c) => {
+                              const isExpanded = expandedRow === c.rank;
+                              const bd = c.breakdown;
+                              return (
+                                <React.Fragment key={c.candidate_id}>
+                                  <tr onClick={() => setExpandedRow(isExpanded ? null : c.rank)} className={`hover:bg-yellow-50 transition-colors cursor-pointer ${isExpanded ? 'bg-blue-50' : ''}`}>
+                                    <td className="p-3 sm:p-5 text-center">
+                                      <div className="w-12 h-12 rounded-xl bg-white border-4 border-slate-900 flex items-center justify-center text-lg font-black text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] mx-auto">
+                                        {c.rank}
+                                      </div>
+                                    </td>
+                                    <td className="p-3 sm:p-5">
+                                      <div className="font-black text-lg text-slate-900 truncate max-w-[200px] sm:max-w-[250px]">{c.rawProfile.profile?.current_title || 'Unknown Role'}</div>
+                                      <div className="flex items-center gap-3 mt-2">
+                                        <span className="text-xs font-bold font-mono text-slate-500 bg-slate-200 px-2 py-1 rounded-md border-2 border-slate-300">
+                                          {c.candidate_id.substring(0, 12)}...
+                                        </span>
+                                        <button 
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(c.candidate_id); }}
+                                          className="text-slate-400 hover:text-blue-600 transition-colors bg-white border-2 border-slate-300 p-1 rounded-md shadow-sm"
+                                          title="Copy Candidate ID"
+                                        >
+                                          <FileText size={14} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="p-3 sm:p-5">
+                                      <span className="px-4 py-2 bg-emerald-100 text-emerald-800 border-4 border-emerald-900 rounded-xl font-black text-lg block w-fit shadow-[4px_4px_0px_0px_#064e3b]">
+                                        {c.score.toFixed(6)}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 sm:p-5 text-sm font-bold text-slate-600 max-w-md hidden md:table-cell leading-relaxed border-l-4 border-slate-100 pl-6">
+                                      {c.reasoning}
+                                    </td>
+                                    <td className="p-3 sm:p-5 text-slate-400 text-center">
+                                      <button 
+                                        type="button"
+                                        onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          setExpandedRow(isExpanded ? null : c.rank);
+                                        }}
+                                        className="w-10 h-10 inline-flex items-center justify-center rounded-xl border-4 border-slate-900 bg-white hover:bg-yellow-300 shadow-[4px_4px_0px_0px_#0f172a] transition-all cursor-pointer active:translate-y-1 active:shadow-none"
+                                        aria-label={isExpanded ? "Close Row" : "Expand Row"}
+                                      >
+                                        {isExpanded ? <ChevronUp size={24} className="text-slate-900" /> : <ChevronDown size={24} className="text-slate-900" />}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                  
+                                  {isExpanded && (
+                                    <tr>
+                                      <td colSpan={5} className="p-0 border-b-4 border-slate-900 bg-slate-50 relative">
+                                        <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
+                                        <motion.div 
+                                          initial={{ opacity: 0, y: -10 }} 
+                                          animate={{ opacity: 1, y: 0 }} 
+                                          className="p-4 sm:p-8 overflow-hidden"
+                                        >
+                                          {bd.honeypot ? (
+                                            <div className="flex items-center gap-6 bg-white border-4 border-rose-400 p-6 rounded-2xl shadow-[6px_6px_0px_0px_#fb7185] text-rose-600">
+                                              <div className="bg-rose-100 p-4 rounded-xl border-4 border-rose-400 shadow-inner"><ShieldAlert size={32} /></div>
+                                              <div>
+                                                <h4 className="font-black uppercase tracking-wider text-lg mb-2 text-rose-500 drop-shadow-sm">Honeypot Triggered</h4>
+                                                <p className="font-bold text-slate-700 leading-relaxed max-w-3xl">Metadata values declare expert qualifications despite conflicting duration history. Baseline floor scoring enforced.</p>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="flex flex-col xl:flex-row gap-8">
+                                              {/* Left: Math & Telemetry */}
+                                              <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
+                                                  <h4 className="text-sm font-black text-blue-600 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><Briefcase size={18}/> Core Dimensions</h4>
+                                                  <ProgressBar label="Career Profile" value={bd.career} />
+                                                  <ProgressBar label="Skills Density" value={bd.skills} />
+                                                  <ProgressBar label="Experience Match" value={bd.experience} />
+                                                  <ProgressBar label="Education Tier" value={bd.education} />
+                                                </div>
+
+                                                <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
+                                                  <h4 className="text-sm font-black text-pink-500 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><CheckCircle size={18}/> Fit Indicators</h4>
+                                                  <ProgressBar label="JD Fit (IDF Rare)" value={bd.jd_fit} colorClass="bg-pink-400" />
+                                                  <ProgressBar label="Descriptions" value={bd.description} colorClass="bg-pink-400" />
+                                                  <ProgressBar label="Assessments" value={bd.assessments} colorClass="bg-pink-400" />
+                                                  <ProgressBar label="Location" value={bd.location} colorClass="bg-pink-400" />
+                                                </div>
+
+                                                <div className="md:col-span-2 bg-yellow-300 p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex flex-col sm:flex-row justify-between items-center gap-6">
+                                                  <div className="flex-1 w-full space-y-3">
+                                                    <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
+                                                      <span className="text-xs uppercase font-black tracking-widest">Raw Base Math</span>
+                                                      <span className="font-mono text-lg font-bold bg-white border-2 border-slate-900 px-2 rounded">{bd.base_score.toFixed(6)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
+                                                      <span className="text-xs uppercase font-black tracking-widest">Behavioral Mod</span>
+                                                      <span className="font-mono text-lg font-bold text-blue-600 bg-white border-2 border-blue-600 px-2 rounded">{bd.behavioral_mult.toFixed(4)}x</span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="shrink-0 text-center bg-white border-4 border-slate-900 rounded-2xl p-4 shadow-inner min-w-[160px]">
+                                                    <span className="text-xs uppercase font-black tracking-widest text-slate-500 block mb-1">Norm. Output</span>
+                                                    <span className="text-4xl font-black text-emerald-500 tracking-tighter drop-shadow-md">{c.score.toFixed(6)}</span>
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              {/* Right: AI Synthesis Panel */}
+                                              <div className="w-full xl:w-1/3 bg-slate-900 text-white rounded-2xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_#fde047] p-6 relative overflow-hidden flex flex-col">
+                                                <div className="absolute top-0 right-0 bg-yellow-300 text-slate-900 font-black px-4 py-1 rounded-bl-xl border-l-4 border-b-4 border-slate-900 text-xs uppercase tracking-widest flex items-center gap-1">
+                                                  <Sparkles size={14}/> Nexus Engine
+                                                </div>
+                                                
+                                                <h4 className="text-2xl font-black text-yellow-300 uppercase tracking-tighter mb-4 mt-2">
+                                                  AI Justification
+                                                </h4>
+                                                
+                                                <div className="space-y-4 flex-1">
+                                                  <p className="text-sm font-bold leading-relaxed text-slate-300">
+                                                    I have positioned this candidate at <span className="text-white bg-blue-600 px-2 py-0.5 rounded border border-blue-400 shadow-sm">Rank #{c.rank}</span> with a final confidence score of <span className="text-white bg-emerald-600 px-2 py-0.5 rounded border border-emerald-400 shadow-sm">{c.score.toFixed(4)}</span>.
+                                                  </p>
+                                                  
+                                                  <div className="p-4 bg-slate-800 border-l-4 border-yellow-300 rounded-r-xl text-sm font-medium text-slate-200 leading-relaxed shadow-inner">
+                                                    {c.reasoning}
+                                                  </div>
+                                                  
+                                                  <p className="text-xs font-bold leading-relaxed text-slate-400">
+                                                    <strong>Key Drivers:</strong> The positioning is heavily influenced by their {(bd.skills * 100).toFixed(0)}% skill density match and a behavioral multiplier of {bd.behavioral_mult.toFixed(2)}x, placing them {c.rank <= 10 ? 'in the top percentile' : 'within the standard distribution'} of the evaluated pool.
+                                                  </p>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </motion.div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      ) : (
+                        /* TERMINAL MODE (Playground Vibe) */
+                        <table className="w-full text-left font-mono text-sm font-bold bg-slate-900 text-slate-300">
+                          <thead>
+                            <tr className="bg-black text-[11px] uppercase tracking-widest text-yellow-300 border-b-4 border-slate-700">
+                              <th className="p-4 border-r-4 border-slate-800">Rnk</th>
+                              <th className="p-4 border-r-4 border-slate-800 w-32">ID</th>
+                              <th className="p-4 border-r-4 border-slate-800">Car</th>
+                              <th className="p-4 border-r-4 border-slate-800">Desc</th>
+                              <th className="p-4 border-r-4 border-slate-800">Skl</th>
+                              <th className="p-4 border-r-4 border-slate-800">JD</th>
+                              <th className="p-4 border-r-4 border-slate-800">Asst</th>
+                              <th className="p-4 border-r-4 border-slate-800">Exp</th>
+                              <th className="p-4 border-r-4 border-slate-800">Loc</th>
+                              <th className="p-4 border-r-4 border-slate-800">Edu</th>
+                              <th className="p-4 text-pink-400 border-r-4 border-slate-800">B.Mult</th>
+                              <th className="p-4 bg-slate-800 border-r-4 border-slate-700">Base</th>
+                              <th className="p-4 bg-blue-600 text-white font-black">Norm Output</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y-4 divide-slate-800">
+                            {filteredRankedData.slice(0, 100).map(c => {
+                              const bd = c.breakdown;
+                              if (bd.honeypot) return (
+                                <tr key={c.candidate_id} className="bg-rose-950 text-rose-400">
+                                  <td className="p-4 border-r-4 border-slate-800">#{c.rank}</td>
+                                  <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800">{c.candidate_id}</td>
+                                  <td colSpan={10} className="p-4 text-center tracking-widest border-r-4 border-slate-800 bg-rose-900/50 font-black">|| HONEYPOT ALERT ||</td>
+                                  <td className="p-4 font-black">0.010000</td>
+                                </tr>
+                              );
+                              return (
+                                <tr key={c.candidate_id} className="hover:bg-slate-800">
+                                  <td className="p-4 border-r-4 border-slate-800 text-white">#{c.rank}</td>
+                                  <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800 text-yellow-300" title={c.candidate_id}>{c.candidate_id.substring(0,8)}..</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.career.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.description.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.skills.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.jd_fit.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.assessments.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.experience.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.location.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800">{bd.education.toFixed(3)}</td>
+                                  <td className="p-4 border-r-4 border-slate-800 text-pink-400 font-black">{bd.behavioral_mult.toFixed(3)}</td>
+                                  <td className="p-4 bg-slate-800 border-r-4 border-slate-700 text-white">{bd.base_score.toFixed(5)}</td>
+                                  <td className="p-4 bg-blue-600/20 text-blue-300 text-base font-black">{c.score.toFixed(6)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </CleanCard>
+                </motion.div>
+              )}
+
+              {/* --- SETTINGS TAB --- */}
+              {activeTab === 'settings' && (
+                <motion.div key="settings" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-4xl mx-auto">
+                   <div>
+                    <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Configurations</h1>
+                    <p className="text-slate-500 font-bold mt-2 text-lg">Locked parameters ensuring strict Python v4 parity.</p>
+                  </div>
+                  <CleanCard className="p-10 bg-white">
+                    <div className="flex items-center gap-6 mb-10 pb-8 border-b-4 border-slate-900">
+                      <div className="w-20 h-20 bg-rose-200 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-slate-900 shadow-[6px_6px_0px_0px_#0f172a] shrink-0 transform -rotate-6">
+                        <ShieldAlert size={40} />
+                      </div>
+                      <p className="text-slate-700 font-bold max-w-xl text-lg leading-relaxed">These core algorithmic weights are immutable in the browser environment to guarantee exact math execution matching your terminal scripts.</p>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                      {Object.entries(WEIGHTS).map(([key, w]) => (
+                        <div key={key} className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 text-center shadow-[6px_6px_0px_0px_#0f172a] hover:-translate-y-1 hover:shadow-[10px_10px_0px_0px_#0f172a] transition-all">
+                          <div className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">{key}</div>
+                          <div className="text-4xl font-black text-slate-900 drop-shadow-sm">{(w * 100).toFixed(0)}%</div>
+                        </div>
+                      ))}
+                    </div>
+                  </CleanCard>
+                </motion.div>
+              )}
+
+              {/* --- PROFILE TAB --- */}
+              {activeTab === 'profile' && (
+                <motion.div key="profile" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-4xl mx-auto">
+                   <div>
+                    <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Operator Profile</h1>
+                    <p className="text-slate-500 font-bold mt-2 text-lg">Identity and access management.</p>
+                  </div>
+                  <CleanCard className="p-10 bg-white">
+                    <div className="flex items-center gap-8 mb-10 pb-8 border-b-4 border-slate-900">
+                      <div className="w-32 h-32 bg-purple-500 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-white text-5xl font-black shadow-[8px_8px_0px_0px_#0f172a] shrink-0 transform rotate-3">
+                        {currentUser?.initials || 'AD'}
+                      </div>
+                      <div>
+                        <h2 className="text-4xl font-black text-slate-900 mb-2">{currentUser?.name || 'Admin User'}</h2>
+                        <p className="text-xl font-bold text-slate-500 flex items-center gap-2">
+                          <Mail size={20} /> {currentUser?.email || 'admin@nexus.ai'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-6">
+                      <div className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                        <h3 className="font-black text-sm uppercase tracking-widest text-slate-500 mb-4">Clearance Level</h3>
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-100 border-4 border-emerald-900 rounded-xl font-black text-emerald-800 shadow-[4px_4px_0px_0px_#064e3b]">
+                          <ShieldAlert size={18} /> Level 4 (Architect)
+                        </div>
+                      </div>
+                      
+                      <div className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                        <h3 className="font-black text-sm uppercase tracking-widest text-slate-500 mb-4">Account Status</h3>
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1">
+                            <p className="font-bold text-slate-900">Active Terminal Session</p>
+                            <p className="text-sm font-bold text-slate-500 mt-1">Parity engine connected securely.</p>
+                          </div>
+                          <CheckCircle size={32} className="text-emerald-500" />
+                        </div>
+                      </div>
+                    </div>
+                  </CleanCard>
+                </motion.div>
+              )}
+
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen text-slate-900 font-sans flex overflow-hidden selection:bg-blue-300" style={dottedGrid}>
-      
+    <>
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </AnimatePresence>
-
-      {/* Floating Sidebar (Neo-Brutalist) */}
-      <div className={`p-4 transition-all duration-300 ${sidebarOpen ? 'w-72' : 'w-24 shrink-0'}`}>
-        <aside className="bg-white border-4 border-slate-900 h-full rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] flex flex-col z-20 overflow-hidden relative">
-          
-          <div className="h-24 flex items-center px-6 justify-between shrink-0 border-b-4 border-slate-900 bg-yellow-300">
-            <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0 border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">
-                <Cpu size={24} className="text-slate-900" />
-              </div>
-              {sidebarOpen && <span className="font-black text-xl tracking-tighter uppercase whitespace-nowrap text-slate-900">Nexus AI</span>}
-            </div>
-          </div>
-          
-          <nav className="flex-1 py-6 px-4 space-y-3 overflow-y-auto">
-            <NavItem id="dashboard" label="Overview" icon={Layout} />
-            <NavItem id="candidates" label="Shortlist" icon={Users} />
-            <NavItem id="settings" label="Parameters" icon={Settings} />
-          </nav>
-
-          <div className="p-4 shrink-0 border-t-4 border-slate-900 bg-slate-100">
-            <button onClick={() => setView('landing')} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:text-white bg-white hover:bg-rose-500 rounded-xl transition-all font-black text-sm uppercase tracking-wider border-2 border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a]">
-              <LogOut size={20} className="shrink-0" />
-              {sidebarOpen && <span className="whitespace-nowrap">Exit</span>}
-            </button>
-          </div>
-        </aside>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden pt-4 pr-4 pb-4">
-        
-        {/* Top Floating Navbar */}
-        <header className="h-20 bg-white border-4 border-slate-900 rounded-2xl px-6 flex items-center justify-between z-10 shrink-0 shadow-[8px_8px_0px_0px_#0f172a] mb-6">
-          <div className="flex items-center gap-6 flex-1 min-w-0">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="w-10 h-10 bg-slate-100 border-2 border-slate-900 rounded-xl flex items-center justify-center hover:bg-yellow-300 hover:shadow-[2px_2px_0px_0px_#0f172a] transition-all shrink-0 active:translate-y-1 active:shadow-none">
-              <Layout size={20} className="text-slate-900" />
-            </button>
-            <div className="relative max-w-md w-full hidden md:block group">
-              <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-              <input 
-                type="text" 
-                placeholder="Query profiles by ID, text..." 
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-100 border-2 border-slate-900 focus:bg-white text-sm rounded-xl pl-12 pr-4 py-3 text-slate-900 placeholder-slate-500 font-bold focus:outline-none transition-all shadow-[2px_2px_0px_0px_#0f172a]"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 shrink-0">
-            <div className="flex items-center gap-2 bg-pink-200 border-2 border-slate-900 px-4 py-2 rounded-xl shadow-[2px_2px_0px_0px_#0f172a]">
-              <Calendar size={18} className="text-slate-900" />
-              <input type="date" value={refDateString} onChange={e => setRefDateString(e.target.value)} className="bg-transparent border-none text-sm text-slate-900 font-black focus:outline-none tracking-wider" />
-            </div>
-            
-            <div className="w-12 h-12 rounded-xl bg-purple-500 border-2 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex items-center justify-center font-black text-white cursor-pointer hover:-translate-y-1 transition-transform">
-              AD
-            </div>
-          </div>
-        </header>
-
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-10">
-          <AnimatePresence mode="wait">
-            
-            {/* --- DASHBOARD TAB --- */}
-            {activeTab === 'dashboard' && (
-              <motion.div key="dashboard" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-6xl mx-auto">
-                <div>
-                  <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">System Overview</h1>
-                  <p className="text-slate-500 font-bold mt-2 text-lg">Executing offline Python v4 logic securely in browser.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <StatCard title="Processed" value={stats.total} sub="Local index" icon={Database} />
-                  <StatCard title="Valid" value={stats.valid} sub="Passed honeypots" icon={CheckCircle} trend={1} />
-                  <StatCard title="Trapped" value={stats.honeypots} sub="Rules triggered" icon={ShieldAlert} />
-                  <StatCard title="Avg Score" value={stats.avgScore} sub="Pool quality" icon={Award} trend={1} />
-                </div>
-
-                <div className="grid lg:grid-cols-3 gap-6">
-                  {/* Action Panel */}
-                  <CleanCard className="lg:col-span-2 p-8 flex flex-col justify-between bg-emerald-50">
-                    <div>
-                      <h3 className="text-3xl font-black text-slate-900 mb-2 uppercase tracking-tighter flex items-center gap-3">
-                        <Zap size={32} className="text-emerald-500 fill-emerald-500"/> Pipeline Controls
-                      </h3>
-                      <p className="text-sm font-bold text-slate-600 mb-8 max-w-md">Deploy configuration matrices. Upload JSONL structures to execute strict parity scoring locally.</p>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-4">
-                      <label className="cursor-pointer font-bold py-3 px-6 rounded-xl border-2 border-slate-900 transition-all flex items-center justify-center gap-2 hover:-translate-y-0.5 hover:-translate-x-0.5 hover:shadow-[5px_5px_0px_0px_#0f172a] active:translate-y-1 active:translate-x-1 active:shadow-none shadow-[3px_3px_0px_0px_#0f172a] bg-blue-500 text-white">
-                         <Upload size={20} /> Upload JSONL
-                         <input type="file" accept=".jsonl,.json,.txt" className="hidden" onChange={handleFileUpload} />
-                      </label>
-                      <BrutalButton onClick={downloadSubmissionCsv} variant="secondary" className="py-4">
-                        <Download size={20} /> Export Filtered CSV
-                      </BrutalButton>
-                    </div>
-                  </CleanCard>
-
-                  {/* Config Snapshot */}
-                  <CleanCard className="p-8 bg-blue-50">
-                    <h3 className="text-sm font-black text-blue-600 uppercase tracking-widest mb-6 pb-4 border-b-4 border-slate-900">Math Weights</h3>
-                    <div className="space-y-4 font-black text-sm">
-                      <div className="flex justify-between text-slate-700"><span className="uppercase">Skills</span><span className="text-slate-900 bg-white border-2 border-slate-900 px-2 py-0.5 rounded-md">22%</span></div>
-                      <div className="flex justify-between text-slate-700"><span className="uppercase">Career</span><span className="text-slate-900 bg-white border-2 border-slate-900 px-2 py-0.5 rounded-md">19%</span></div>
-                      <div className="flex justify-between text-slate-700"><span className="uppercase">JD Fit</span><span className="text-slate-900 bg-white border-2 border-slate-900 px-2 py-0.5 rounded-md">15%</span></div>
-                      <div className="flex justify-between text-slate-700"><span className="uppercase">Assessments</span><span className="text-slate-900 bg-white border-2 border-slate-900 px-2 py-0.5 rounded-md">13%</span></div>
-                      <div className="pt-4 mt-4 border-t-4 border-slate-900 flex justify-between text-slate-700">
-                        <span className="uppercase mt-1">Clamp limits</span><span className="text-purple-600 bg-white border-2 border-slate-900 px-2 py-1 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">[0.5, 1.2]</span>
-                      </div>
-                    </div>
-                  </CleanCard>
-                </div>
-              </motion.div>
-            )}
-
-            {/* --- CANDIDATES TAB --- */}
-            {activeTab === 'candidates' && (
-              <motion.div key="candidates" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6 max-w-7xl mx-auto">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
-                  <div>
-                    <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Candidate Index</h1>
-                    <p className="text-slate-500 font-bold mt-2 text-lg">Select any row to view expanded math telemetry.</p>
-                  </div>
-                  <div className="flex bg-white p-2 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] shrink-0 gap-2">
-                    <button onClick={() => setComparisonMode(false)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${!comparisonMode ? 'bg-blue-500 text-white shadow-[2px_2px_0px_0px_#0f172a] border-2 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-2 border-transparent'}`}>Standard UI</button>
-                    <button onClick={() => setComparisonMode(true)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${comparisonMode ? 'bg-pink-400 text-slate-900 shadow-[2px_2px_0px_0px_#0f172a] border-2 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-2 border-transparent'}`}>Hacker Grid</button>
-                  </div>
-                </div>
-
-                <CleanCard className="overflow-hidden p-0 border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] bg-white">
-                  <div className="overflow-x-auto">
-                    {!comparisonMode ? (
-                      <table className="w-full text-left">
-                        <thead>
-                          <tr className="bg-slate-100 border-b-4 border-slate-900">
-                            <th className="p-5 w-24 text-center font-black text-sm uppercase tracking-widest text-slate-900">Rank</th>
-                            <th className="p-5 font-black text-sm uppercase tracking-widest text-slate-900">Identity</th>
-                            <th className="p-5 w-32 font-black text-sm uppercase tracking-widest text-slate-900">Score</th>
-                            <th className="p-5 font-black text-sm uppercase tracking-widest text-slate-900 hidden md:table-cell">Reasoning Log</th>
-                            <th className="p-5 w-16"></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y-4 divide-slate-100">
-                          {filteredRankedData.slice(0, 100).map((c) => {
-                            const isExpanded = expandedRow === c.rank;
-                            const bd = c.breakdown;
-                            return (
-                              <React.Fragment key={c.candidate_id}>
-                                <tr onClick={() => setExpandedRow(isExpanded ? null : c.rank)} className={`hover:bg-yellow-50 transition-colors cursor-pointer ${isExpanded ? 'bg-blue-50' : ''}`}>
-                                  <td className="p-5 text-center">
-                                    <div className="w-12 h-12 rounded-xl bg-white border-2 border-slate-900 flex items-center justify-center text-lg font-black text-slate-900 shadow-[2px_2px_0px_0px_#0f172a] mx-auto">
-                                      {c.rank}
-                                    </div>
-                                  </td>
-                                  <td className="p-5">
-                                    <div className="font-black text-lg text-slate-900 truncate max-w-[250px]">{c.rawProfile.profile?.current_title || 'Unknown Role'}</div>
-                                    <div className="flex items-center gap-3 mt-2">
-                                      <span className="text-xs font-bold font-mono text-slate-500 bg-slate-200 px-2 py-1 rounded-md border border-slate-300">
-                                        {c.candidate_id.substring(0, 12)}...
-                                      </span>
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); copyToClipboard(c.candidate_id); }}
-                                        className="text-slate-400 hover:text-blue-600 transition-colors bg-white border border-slate-300 p-1 rounded-md shadow-sm"
-                                        title="Copy Candidate ID"
-                                      >
-                                        <FileText size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td className="p-5">
-                                    <span className="px-4 py-2 bg-emerald-100 text-emerald-800 border-2 border-emerald-900 rounded-xl font-black text-lg block w-fit shadow-[2px_2px_0px_0px_#064e3b]">
-                                      {c.score.toFixed(6)}
-                                    </span>
-                                  </td>
-                                  <td className="p-5 text-sm font-bold text-slate-600 max-w-md truncate hidden md:table-cell leading-relaxed border-l-4 border-slate-100 pl-6">
-                                    {c.reasoning}
-                                  </td>
-                                  <td className="p-5 text-slate-400 text-right">
-                                    <div className="w-10 h-10 inline-flex items-center justify-center rounded-xl border-2 border-slate-900 bg-white hover:bg-slate-100 shadow-[2px_2px_0px_0px_#0f172a] transition-all">
-                                      {isExpanded ? <ChevronUp size={24} className="text-slate-900" /> : <ChevronDown size={24} className="text-slate-900" />}
-                                    </div>
-                                  </td>
-                                </tr>
-                                
-                                {isExpanded && (
-                                  <tr>
-                                    <td colSpan="5" className="p-0 border-b-4 border-slate-900 bg-slate-50 relative">
-                                      <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
-                                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="p-8">
-                                        {bd.honeypot ? (
-                                          <div className="flex items-center gap-6 bg-white border-4 border-rose-400 p-6 rounded-2xl shadow-[4px_4px_0px_0px_#fb7185] text-rose-600">
-                                            <div className="bg-rose-100 p-4 rounded-xl border-2 border-rose-400 shadow-inner"><ShieldAlert size={32} /></div>
-                                            <div>
-                                              <h4 className="font-black uppercase tracking-wider text-lg mb-2 text-rose-500 drop-shadow-sm">Honeypot Triggered</h4>
-                                              <p className="font-bold text-slate-700 leading-relaxed max-w-3xl">Metadata values declare expert qualifications despite conflicting duration history. Baseline floor scoring enforced.</p>
-                                            </div>
-                                          </div>
-                                        ) : (
-                                          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-                                            <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] space-y-6">
-                                              <h4 className="text-sm font-black text-blue-600 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><Briefcase size={18}/> Core Dimensions</h4>
-                                              <ProgressBar label="Career Profile" value={bd.career} />
-                                              <ProgressBar label="Skills Density" value={bd.skills} />
-                                              <ProgressBar label="Experience Match" value={bd.experience} />
-                                              <ProgressBar label="Education Tier" value={bd.education} />
-                                            </div>
-
-                                            <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] space-y-6">
-                                              <h4 className="text-sm font-black text-pink-500 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><CheckCircle size={18}/> Fit Indicators</h4>
-                                              <ProgressBar label="JD Fit (IDF Rare)" value={bd.jd_fit} colorClass="bg-pink-400" />
-                                              <ProgressBar label="Descriptions" value={bd.description} colorClass="bg-pink-400" />
-                                              <ProgressBar label="Assessments" value={bd.assessments} colorClass="bg-pink-400" />
-                                              <ProgressBar label="Location" value={bd.location} colorClass="bg-pink-400" />
-                                            </div>
-
-                                            <div className="bg-yellow-300 p-8 rounded-2xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] flex flex-col justify-center space-y-6 text-slate-900 transform sm:-rotate-1 sm:hover:rotate-0 transition-transform">
-                                              <div className="flex justify-between items-center border-b-4 border-slate-900 pb-4 bg-white/50 px-4 py-2 rounded-xl">
-                                                <span className="text-xs uppercase font-black tracking-widest">Raw Base Math</span>
-                                                <span className="font-mono text-xl font-bold bg-white border-2 border-slate-900 px-2 rounded">{bd.base_score.toFixed(6)}</span>
-                                              </div>
-                                              <div className="flex justify-between items-center border-b-4 border-slate-900 pb-4 bg-white/50 px-4 py-2 rounded-xl">
-                                                <span className="text-xs uppercase font-black tracking-widest">Behavioral Mod</span>
-                                                <span className="font-mono text-xl font-bold text-blue-600 bg-white border-2 border-blue-600 px-2 rounded">{bd.behavioral_mult.toFixed(4)}x</span>
-                                              </div>
-                                              <div className="pt-4 text-center bg-white border-4 border-slate-900 rounded-2xl p-6 shadow-inner">
-                                                <span className="text-sm uppercase font-black tracking-widest text-slate-500 block mb-3">Final Normalized Output</span>
-                                                <span className="text-5xl font-black text-emerald-500 tracking-tighter drop-shadow-md">
-                                                  {c.score.toFixed(6)}
-                                                </span>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </motion.div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </React.Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    ) : (
-                      /* TERMINAL MODE (Playground Vibe) */
-                      <table className="w-full text-left font-mono text-sm font-bold bg-slate-900 text-slate-300">
-                        <thead>
-                          <tr className="bg-black text-[11px] uppercase tracking-widest text-yellow-300 border-b-4 border-slate-700">
-                            <th className="p-4 border-r-2 border-slate-800">Rnk</th>
-                            <th className="p-4 border-r-2 border-slate-800 w-32">ID</th>
-                            <th className="p-4 border-r-2 border-slate-800">Car</th>
-                            <th className="p-4 border-r-2 border-slate-800">Desc</th>
-                            <th className="p-4 border-r-2 border-slate-800">Skl</th>
-                            <th className="p-4 border-r-2 border-slate-800">JD</th>
-                            <th className="p-4 border-r-2 border-slate-800">Asst</th>
-                            <th className="p-4 border-r-2 border-slate-800">Exp</th>
-                            <th className="p-4 border-r-2 border-slate-800">Loc</th>
-                            <th className="p-4 border-r-2 border-slate-800">Edu</th>
-                            <th className="p-4 text-pink-400 border-r-2 border-slate-800">B.Mult</th>
-                            <th className="p-4 bg-slate-800 border-r-2 border-slate-700">Base</th>
-                            <th className="p-4 bg-blue-600 text-white font-black">Norm Output</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y-2 divide-slate-800">
-                          {filteredRankedData.slice(0, 100).map(c => {
-                            const bd = c.breakdown;
-                            if (bd.honeypot) return (
-                              <tr key={c.candidate_id} className="bg-rose-950 text-rose-400">
-                                <td className="p-4 border-r-2 border-slate-800">#{c.rank}</td>
-                                <td className="p-4 truncate max-w-[100px] border-r-2 border-slate-800">{c.candidate_id}</td>
-                                <td colSpan="10" className="p-4 text-center tracking-widest border-r-2 border-slate-800 bg-rose-900/50 font-black">|| HONEYPOT ALERT ||</td>
-                                <td className="p-4 font-black">0.010000</td>
-                              </tr>
-                            );
-                            return (
-                              <tr key={c.candidate_id} className="hover:bg-slate-800">
-                                <td className="p-4 border-r-2 border-slate-800 text-white">#{c.rank}</td>
-                                <td className="p-4 truncate max-w-[100px] border-r-2 border-slate-800 text-yellow-300" title={c.candidate_id}>{c.candidate_id.substring(0,8)}..</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.career.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.description.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.skills.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.jd_fit.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.assessments.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.experience.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.location.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800">{bd.education.toFixed(3)}</td>
-                                <td className="p-4 border-r-2 border-slate-800 text-pink-400 font-black">{bd.behavioral_mult.toFixed(3)}</td>
-                                <td className="p-4 bg-slate-800 border-r-2 border-slate-700 text-white">{bd.base_score.toFixed(5)}</td>
-                                <td className="p-4 bg-blue-600/20 text-blue-300 text-base font-black">{c.score.toFixed(6)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </CleanCard>
-              </motion.div>
-            )}
-
-            {/* --- SETTINGS TAB --- */}
-            {activeTab === 'settings' && (
-              <motion.div key="settings" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-4xl mx-auto">
-                 <div>
-                  <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Configurations</h1>
-                  <p className="text-slate-500 font-bold mt-2 text-lg">Locked parameters ensuring strict Python v4 parity.</p>
-                </div>
-                <CleanCard className="p-10 bg-white">
-                  <div className="flex items-center gap-6 mb-10 pb-8 border-b-4 border-slate-900">
-                    <div className="w-20 h-20 bg-rose-200 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] shrink-0 transform -rotate-6">
-                      <ShieldAlert size={40} />
-                    </div>
-                    <p className="text-slate-700 font-bold max-w-xl text-lg leading-relaxed">These core algorithmic weights are immutable in the browser environment to guarantee exact math execution matching your terminal scripts.</p>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                    {Object.entries(WEIGHTS).map(([key, w]) => (
-                      <div key={key} className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 text-center shadow-[4px_4px_0px_0px_#0f172a] hover:-translate-y-1 hover:shadow-[8px_8px_0px_0px_#0f172a] transition-all">
-                        <div className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">{key}</div>
-                        <div className="text-4xl font-black text-slate-900 drop-shadow-sm">{(w * 100).toFixed(0)}%</div>
-                      </div>
-                    ))}
-                  </div>
-                </CleanCard>
-              </motion.div>
-            )}
-
-          </AnimatePresence>
-        </div>
-      </main>
-    </div>
+      {renderContent()}
+    </>
   );
 }
