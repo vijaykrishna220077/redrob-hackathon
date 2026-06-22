@@ -1,3 +1,4 @@
+import { supabase } from "./lib/supabase";
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -632,20 +633,26 @@ export default function App() {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '??';
   };
 
-  const handleLogin = (email, password) => {
-    if (!email || !password) {
-      showToast("Please provide both email and password.", "error");
-      return;
-    }
-    const user = registeredUsers.find(u => u.email === email);
-    if (user) {
-      setCurrentUser({ ...user, initials: getInitials(user.name) });
-      setView('dashboard');
-      showToast(`Welcome back, ${user.name}`);
-    } else {
-      showToast("Unregistered identity. Please click 'Request Access' below to register.", "error");
-    }
-  };
+  const handleLogin = async (email, password) => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    showToast(error.message, "error");
+    return;
+  }
+
+  setCurrentUser({
+    email: data.user.email,
+    name: data.user.email.split("@")[0],
+    initials: data.user.email.substring(0, 2).toUpperCase(),
+  });
+
+  setView("dashboard");
+  showToast("Login successful");
+};
 
   const handleSignup = (name, email, password) => {
     if (!name || !email || !password) {
