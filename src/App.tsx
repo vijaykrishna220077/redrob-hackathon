@@ -1,18 +1,130 @@
-import { supabase } from "./lib/supabase";
+import { supabase } from './lib/supabase';
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
-  ResponsiveContainer, AreaChart, Area
-} from 'recharts';
+
+// ==========================================
+// SUPABASE CLIENT SETUP & SAFETY GATES
+// ==========================================
+let isRealSupabase = true;
+const createMockSupabase = () => {
+  const getStorage = (key: string, def: any) => {
+    try {
+      const item = localStorage.getItem(key);
+      return item ? JSON.parse(item) : def;
+    } catch { return def; }
+  };
+  const setStorage = (key: string, val: any) => {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+  };
+
+  return {
+    auth: {
+      getUser: async () => {
+        const session = getStorage('nexus_session', null);
+        return { data: { user: session }, error: null };
+      },
+      signUp: async ({ email, password, options }: any) => {
+        const users = getStorage('nexus_users', []);
+        if (users.some((u: any) => u.email === email)) {
+          return { data: { user: null }, error: { message: "Operator identity already registered." } };
+        }
+        const newUser = { id: 'usr_' + Math.random().toString(36).substring(2, 11), email, user_metadata: options?.data || {} };
+        setStorage('nexus_users', [...users, { ...newUser, password }]);
+        setStorage('nexus_session', newUser);
+        return { data: { user: newUser }, error: null };
+      },
+      signInWithPassword: async ({ email, password }: any) => {
+        const users = getStorage('nexus_users', []);
+        const matched = users.find((u: any) => u.email === email && u.password === password);
+        if (!matched) {
+          return { data: { user: null }, error: { message: "Invalid credentials or unauthorized terminal clearance." } };
+        }
+        const sessionUser = { id: matched.id, email: matched.email, user_metadata: matched.user_metadata };
+        setStorage('nexus_session', sessionUser);
+        return { data: { user: sessionUser }, error: null };
+      },
+      signOut: async () => {
+        setStorage('nexus_session', null);
+        return { error: null };
+      },
+      onAuthStateChange: (callback: any) => {
+        return { data: { subscription: { unsubscribe: () => {} } } };
+      }
+    },
+    from: (table: string) => ({
+      select: () => ({
+        eq: (col: string, val: any) => ({
+          single: async () => {
+            if (table === 'user_profiles') {
+              const session = getStorage('nexus_session', null);
+              if (!session || session.id !== val) return { data: null, error: { code: 'PGRST116' } };
+              return {
+                data: {
+                  user_id: session.id,
+                  name: session.user_metadata?.full_name || 'System Architect',
+                  email: session.email,
+                  role: 'Level 4 (Architect)'
+                },
+                error: null
+              };
+            }
+            return { data: null, error: null };
+          },
+          order: () => Promise.resolve({ data: [], error: null })
+        }),
+        order: () => ({
+          eq: (col: string, val: any) => {
+            if (table === 'ranking_runs') {
+              const runs = getStorage('nexus_runs_' + val, []);
+              return Promise.resolve({ data: runs, error: null });
+            }
+            if (table === 'candidate_workflows') {
+              const workflows = getStorage('nexus_workflows_' + val, []);
+              return Promise.resolve({ data: workflows, error: null });
+            }
+            return Promise.resolve({ data: [], error: null });
+          }
+        })
+      }),
+      upsert: async (obj: any) => {
+        const session = getStorage('nexus_session', null);
+        if (session) {
+          if (table === 'user_profiles') {
+            session.user_metadata = { ...session.user_metadata, full_name: obj.name };
+            setStorage('nexus_session', session);
+            const users = getStorage('nexus_users', []);
+            setStorage('nexus_users', users.map((u: any) => u.id === session.id ? { ...u, user_metadata: session.user_metadata } : u));
+          } else if (table === 'candidate_workflows') {
+            const key = 'nexus_workflows_' + session.id;
+            const current = getStorage(key, []);
+            const filtered = current.filter((x: any) => x.candidate_id !== obj.candidate_id);
+            setStorage(key, [...filtered, obj]);
+          }
+        }
+        return { error: null };
+      },
+      insert: async (obj: any) => {
+        const session = getStorage('nexus_session', null);
+        if (session) {
+          if (table === 'ranking_runs') {
+            const key = 'nexus_runs_' + session.id;
+            const current = getStorage(key, []);
+            setStorage(key, [{ id: Date.now(), created_at: new Date().toISOString(), ...obj }, ...current]);
+          }
+        }
+        return { error: null };
+      }
+    })
+  };
+};
+
 import { 
   Upload, Download, Users, ShieldAlert, BarChart2, FileText, 
   CheckCircle, ChevronDown, ChevronUp, Calendar, Search, 
-  Settings, Database, Zap, Cpu, Award, Sparkles,
+  Settings, Database, Zap, Cpu, Award, Sparkles, Brain, Filter,
   ArrowRight, Briefcase, RefreshCw, Bell, Layout, Eye, LogOut, Check, X,
-  Mail, Lock, User, Key, ArrowLeft
+  Mail, Lock, User, Key, ArrowLeft, AlertTriangle, ThumbsUp, ThumbsDown, Clock, ClipboardList, DatabaseZap
 } from 'lucide-react';
-
 
 // ==========================================
 // SCORING ENGINE PARITY LOGIC (STRICT PYTHON V4)
@@ -54,7 +166,7 @@ const INDIA_METROS = ["pune", "noida", "delhi", "gurugram", "gurgaon", "bengalur
 const SENIOR_TITLES = ["senior", "lead", "staff", "principal"];
 const ML_ENG_ROLE_KEYWORDS = ["engineer", "scientist", "researcher", "developer", "ml", "ai", "nlp", "search", "ranking", "recommendation", "data", "backend", "platform", "infrastructure"];
 
-const daysSince = (dateStr, referenceDate) => {
+const daysSince = (dateStr: string, referenceDate: Date) => {
   if (!dateStr) return 9999;
   try {
     const parts = dateStr.split('T')[0].split('-');
@@ -66,26 +178,26 @@ const daysSince = (dateStr, referenceDate) => {
   } catch { return 9999; }
 };
 
-const isHoneypot = (c) => {
+const isHoneypot = (c: any) => {
   const skills = c.skills || [];
   const career = c.career_history || [];
   const yoe = c.profile?.years_of_experience || 0;
-  const expertZero = skills.filter(s => s.proficiency === "expert" && (s.duration_months === undefined ? 1 : s.duration_months) === 0).length;
+  const expertZero = skills.filter((s: any) => s.proficiency === "expert" && (s.duration_months === undefined ? 1 : s.duration_months) === 0).length;
   if (expertZero >= 3) return true;
-  const totalMonths = career.reduce((sum, j) => sum + (j.duration_months || 0), 0);
+  const totalMonths = career.reduce((sum: number, j: any) => sum + (j.duration_months || 0), 0);
   if (yoe > 3 && totalMonths < yoe * 12 * 0.4) return true;
-  const expertCount = skills.filter(s => s.proficiency === "expert").length;
+  const expertCount = skills.filter((s: any) => s.proficiency === "expert").length;
   const expertLimit = Math.max(12, Math.floor(yoe * 2));
   if (expertCount >= expertLimit) return true;
   if (yoe < 3 && expertCount > 8) return true;
   return false;
 };
 
-const scoreCareer = (c) => {
+const scoreCareer = (c: any) => {
   const career = c.career_history || [];
   if (!career.length) return 0.0;
   let weightedScore = 0.0;
-  career.forEach(job => {
+  career.forEach((job: any) => {
     const title = (job.title || "").toLowerCase();
     const company = (job.company || "").toLowerCase();
     const industry = (job.industry || "").toLowerCase();
@@ -106,15 +218,15 @@ const scoreCareer = (c) => {
 
     weightedScore += (titleScore + companyBonus) * timeWeight;
   });
-  const totalTimeWeightSum = career.reduce((sum, job) => sum + Math.min((job.duration_months || 0) / 24, 2.0), 0);
+  const totalTimeWeightSum = career.reduce((sum: number, job: any) => sum + Math.min((job.duration_months || 0) / 24, 2.0), 0);
   return Math.max(0.0, Math.min(weightedScore / Math.max(totalTimeWeightSum, 1.0), 1.0));
 };
 
-const scoreDescription = (c) => {
+const scoreDescription = (c: any) => {
   const career = c.career_history || [];
   if (!career.length) return 0.0;
   let totalHigh = 0, totalMedium = 0;
-  career.forEach(job => {
+  career.forEach((job: any) => {
     const desc = (job.description || "").toLowerCase();
     const months = job.duration_months !== undefined ? job.duration_months : 1;
     const timeWeight = Math.min(months / 24, 1.5);
@@ -124,17 +236,17 @@ const scoreDescription = (c) => {
   return 0.75 * Math.min(totalHigh / 5.0, 1.0) + 0.25 * Math.min(totalMedium / 8.0, 1.0);
 };
 
-const scoreSkills = (c) => {
+const scoreSkills = (c: any) => {
   const skills = c.skills || [];
   if (!skills.length) return 0.0;
   let requiredHits = 0.0, bonusHits = 0.0;
-  skills.forEach(skill => {
+  skills.forEach((skill: any) => {
     const name = (skill.name || "").toLowerCase();
     const proficiency = skill.proficiency || "beginner";
     const months = skill.duration_months || 0;
     const endorsements = skill.endorsements || 0;
     if (["expert", "advanced"].includes(proficiency) && months === 0) return;
-    const profMult = { beginner: 0.3, intermediate: 0.6, advanced: 0.85, expert: 1.0 }[proficiency] || 0.5;
+    const profMult = ({ beginner: 0.3, intermediate: 0.6, advanced: 0.85, expert: 1.0 } as any)[proficiency] || 0.5;
     const durationMult = months > 0 ? Math.min(months / 48, 1.0) : 0.2;
     const endorseMult = Math.min(endorsements / 20, 1.0);
     const skillScore = profMult * (0.6 * durationMult + 0.4 * endorseMult);
@@ -144,9 +256,9 @@ const scoreSkills = (c) => {
   return 0.8 * Math.min(requiredHits / 3.0, 1.0) + 0.2 * Math.min(bonusHits / 2.0, 1.0);
 };
 
-const scoreJdFit = (c) => {
-  let text = (c.career_history || []).map(j => (j.description || "").toLowerCase() + " " + (j.title || "").toLowerCase()).join(" ") +
-             (c.skills || []).map(s => (s.name || "").toLowerCase()).join(" ");
+const scoreJdFit = (c: any) => {
+  let text = (c.career_history || []).map((j: any) => (j.description || "").toLowerCase() + " " + (j.title || "").toLowerCase()).join(" ") +
+             (c.skills || []).map((s: any) => (s.name || "").toLowerCase()).join(" ");
   let weightedHits = 0;
   for (const [term, weight] of Object.entries(CORE_JD_TERMS)) {
     if (text.includes(term)) weightedHits += weight;
@@ -154,16 +266,16 @@ const scoreJdFit = (c) => {
   return Math.min(weightedHits / (CORE_JD_MAX * 0.35), 1.0);
 };
 
-const scoreAssessments = (c) => {
+const scoreAssessments = (c: any) => {
   const assessments = (c.redrob_signals || {}).skill_assessment_scores || {};
   const entries = Object.entries(assessments);
   if (!entries.length) return 0.4;
-  const relevantScores = entries.filter(([name]) => RELEVANT_ASSESSMENTS.some(rel => name.toLowerCase().includes(rel))).map(([, score]) => score);
+  const relevantScores = entries.filter(([name]) => RELEVANT_ASSESSMENTS.some(rel => name.toLowerCase().includes(rel))).map(([, score]: any) => score);
   if (!relevantScores.length) return 0.4;
-  return (relevantScores.reduce((a, b) => a + b, 0) / relevantScores.length) / 100.0;
+  return (relevantScores.reduce((a: number, b: number) => a + b, 0) / relevantScores.length) / 100.0;
 };
 
-const scoreExperience = (c) => {
+const scoreExperience = (c: any) => {
   const yoe = c.profile?.years_of_experience || 0;
   if (yoe >= EXP_IDEAL_LOW && yoe <= EXP_IDEAL_HIGH) return 1.0;
   if (yoe >= EXP_MIN && yoe < EXP_IDEAL_LOW) return 0.4 + 0.6 * (yoe - EXP_MIN) / (EXP_IDEAL_LOW - EXP_MIN);
@@ -171,7 +283,7 @@ const scoreExperience = (c) => {
   return 0.2;
 };
 
-const scoreLocation = (c) => {
+const scoreLocation = (c: any) => {
   const profile = c.profile || {};
   const location = (profile.location || "").toLowerCase();
   const country = (profile.country || "").toLowerCase();
@@ -184,25 +296,25 @@ const scoreLocation = (c) => {
   return willing ? 0.5 : 0.15;
 };
 
-const scoreEducation = (c) => {
+const scoreEducation = (c: any) => {
   const edu = c.education || [];
   if (!edu.length) return 0.5;
-  const tierScores = { tier_1: 1.0, tier_2: 0.8, tier_3: 0.6, tier_4: 0.4, unknown: 0.5 };
-  return Math.max(...edu.map(e => tierScores[e.tier || "unknown"] || 0.5));
+  const tierScores = { tier_1: 1.0, tier_2: 0.8, tier_3: 0.6, tier_4: 0.4, unknown: 0.5 } as any;
+  return Math.max(...edu.map((e: any) => tierScores[e.tier || "unknown"] || 0.5));
 };
 
-const promotionScore = (c) => {
+const promotionScore = (c: any) => {
   const career = c.career_history || [];
   if (career.length < 2) return 0.5;
   let count = 0;
-  career.forEach(job => {
+  career.forEach((job: any) => {
     const title = (job.title || "").toLowerCase();
     if (SENIOR_TITLES.some(x => title.includes(x)) && ML_ENG_ROLE_KEYWORDS.some(x => title.includes(x))) count++;
   });
   return Math.min(count / 3.0, 1.0);
 };
 
-const behavioralMultiplier = (c, referenceDate) => {
+const behavioralMultiplier = (c: any, referenceDate: Date) => {
   const rs = c.redrob_signals || {};
   let multiplier = 1.0;
   const daysActive = daysSince(rs.last_active_date, referenceDate);
@@ -245,7 +357,7 @@ const behavioralMultiplier = (c, referenceDate) => {
   return Math.max(0.5, Math.min(multiplier, 1.2)); 
 };
 
-const generateReasoning = (c, score, referenceDate) => {
+const generateReasoning = (c: any, score: number, referenceDate: Date) => {
   const p = c.profile || {};
   const rs = c.redrob_signals || {};
   const skills = c.skills || [];
@@ -256,16 +368,16 @@ const generateReasoning = (c, score, referenceDate) => {
   const activeDays = daysSince(rs.last_active_date, referenceDate);
   const openToWork = rs.open_to_work_flag || false;
 
-  const relevant = skills.filter(s => [...REQUIRED_SKILLS, ...BONUS_SKILLS].some(r => (s.name || "").toLowerCase().includes(r)) && (s.duration_months || 0) > 6).map(s => s.name).slice(0, 3);
+  const relevant = skills.filter((s: any) => [...REQUIRED_SKILLS, ...BONUS_SKILLS].some(r => (s.name || "").toLowerCase().includes(r)) && (s.duration_months || 0) > 6).map((s: any) => s.name).slice(0, 3);
   
   let topAssessment = null;
   const entries = Object.entries(rs.skill_assessment_scores || {});
   if (entries.length > 0) {
-    const best = entries.reduce((a, b) => a[1] > b[1] ? a : b);
+    const best: any = entries.reduce((a: any, b: any) => a[1] > b[1] ? a : b);
     if (best[1] >= 70) topAssessment = `${best[0]}: ${Math.round(best[1])}/100`;
   }
 
-  let jdText = (c.career_history || []).map(j => (j.description || "").toLowerCase()).join(" ") + " " + skills.map(sk => (sk.name || "").toLowerCase()).join(" ");
+  let jdText = (c.career_history || []).map((j: any) => (j.description || "").toLowerCase()).join(" ") + " " + skills.map((sk: any) => (sk.name || "").toLowerCase()).join(" ");
   let jdWeighted = 0;
   for (const [t, w] of Object.entries(CORE_JD_TERMS)) {
     if (jdText.includes(t)) jdWeighted += w;
@@ -295,15 +407,15 @@ const generateReasoning = (c, score, referenceDate) => {
   return parts.join(" ");
 };
 
-const rankCandidates = (candidates, referenceDate) => {
+const rankCandidates = (candidates: any[], referenceDate: Date) => {
   const scored = candidates.map(c => {
     if (isHoneypot(c)) return { candidate: c, score: 0.01, breakdown: { honeypot: true } };
     const breakdown = {
       career: scoreCareer(c), description: scoreDescription(c), skills: scoreSkills(c),
       jd_fit: scoreJdFit(c), assessments: scoreAssessments(c), experience: scoreExperience(c),
       location: scoreLocation(c), education: scoreEducation(c)
-    };
-    const base = Object.keys(WEIGHTS).reduce((sum, key) => sum + WEIGHTS[key] * breakdown[key], 0);
+    } as any;
+    const base = Object.keys(WEIGHTS).reduce((sum, key) => sum + (WEIGHTS as any)[key] * breakdown[key], 0);
     const bm = behavioralMultiplier(c, referenceDate);
     breakdown.behavioral_mult = bm; breakdown.base_score = base;
     return { candidate: c, score: Number((base * bm).toFixed(6)), breakdown };
@@ -312,7 +424,7 @@ const rankCandidates = (candidates, referenceDate) => {
   scored.sort((a, b) => Math.abs(b.score - a.score) > 1e-9 ? b.score - a.score : (a.candidate.candidate_id || "").localeCompare(b.candidate.candidate_id || ""));
 
   const realScores = scored.filter(x => x.score > 0.01).map(x => x.score);
-  let normalizedByCandidateId = {};
+  let normalizedByCandidateId = {} as any;
   if (realScores.length > 0) {
     const maxScore = Math.max(...realScores), minScore = Math.min(...realScores), scoreRange = maxScore - minScore;
     scored.forEach(item => {
@@ -334,42 +446,10 @@ const rankCandidates = (candidates, referenceDate) => {
   }));
 };
 
-
-const INITIAL_CANDIDATES = [
-  {
-    candidate_id: "cand-f89a2b91",
-    profile: { current_title: "Senior ML Engineer", years_of_experience: 7.2, location: "Bengaluru, India", country: "India" },
-    skills: [
-      { name: "embeddings", proficiency: "expert", duration_months: 36, endorsements: 18 },
-      { name: "python", proficiency: "expert", duration_months: 72, endorsements: 45 },
-      { name: "rag", proficiency: "expert", duration_months: 28, endorsements: 22 },
-      { name: "ndcg", proficiency: "intermediate", duration_months: 18, endorsements: 8 }
-    ],
-    career_history: [
-      { title: "Senior Machine Learning Engineer", company: "NextGen AI", industry: "ai", duration_months: 36, description: "Built vector search systems and sparse-dense hybrid RAG pipelines using Milvus. Assessed evaluation pipelines with NDCG and MRR metrics." }
-    ],
-    education: [{ tier: "tier_1", degree: "B.Tech in Computer Science" }],
-    redrob_signals: { last_active_date: "2024-12-15", open_to_work_flag: true, recruiter_response_rate: 0.92, notice_period_days: 15, skill_assessment_scores: { "python": 94, "nlp": 88 }, willing_to_relocate: true }
-  },
-  {
-    candidate_id: "cand-cb91a27e",
-    profile: { current_title: "AI Specialist", years_of_experience: 5.5, location: "Pune, India", country: "India" },
-    skills: [
-      { name: "qdrant", proficiency: "advanced", duration_months: 18, endorsements: 9 },
-      { name: "python", proficiency: "expert", duration_months: 60, endorsements: 33 }
-    ],
-    career_history: [{ title: "Machine Learning Specialist", company: "Cognizant Technology Solutions", industry: "it services", duration_months: 30, description: "Maintained deep learning classifiers and open-source LLM wrappers." }],
-    education: [{ tier: "tier_2", degree: "M.Tech in AI" }],
-    redrob_signals: { last_active_date: "2024-11-20", open_to_work_flag: false, recruiter_response_rate: 0.55, notice_period_days: 60, skill_assessment_scores: { "python": 81 }, willing_to_relocate: true }
-  }
-];
-
-
 // ==========================================
-// NEO-BRUTALIST COMPONENTS
+// HOISTED UTILITY COMPONENTS (SAFETY ARTIFACTS)
 // ==========================================
-
-const BrutalButton = ({ children, onClick, className = "", variant = "primary", disabled = false, type="button" }) => {
+function BrutalButton({ children, onClick, className = "", variant = "primary", disabled = false, type = "button" }: any) {
   const base = "font-bold py-3 px-6 rounded-xl border-4 border-slate-900 transition-all flex items-center justify-center gap-2";
   const active = disabled ? "opacity-50 cursor-not-allowed" : "hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_0px_#0f172a] active:translate-y-1 active:translate-x-1 active:shadow-none shadow-[4px_4px_0px_0px_#0f172a]";
   
@@ -381,60 +461,80 @@ const BrutalButton = ({ children, onClick, className = "", variant = "primary", 
     purple: "bg-purple-500 text-white",
     yellow: "bg-yellow-300 text-slate-900",
     pink: "bg-pink-500 text-white"
-  };
+  } as any;
 
   return (
     <button type={type} disabled={disabled} onClick={onClick} className={`${base} ${active} ${variants[variant]} ${className}`}>
       {children}
     </button>
   );
-};
+}
 
-const CleanCard = ({ children, className = "" }) => (
-  <div className={`bg-white border-4 border-slate-900 rounded-2xl shadow-[6px_6px_0px_0px_#0f172a] ${className}`}>
-    {children}
-  </div>
-);
+function CleanCard({ children, className = "" }: any) {
+  return (
+    <div className={`bg-white border-4 border-slate-900 rounded-2xl shadow-[6px_6px_0px_0px_#0f172a] ${className}`}>
+      {children}
+    </div>
+  );
+}
 
-const StatCard = ({ title, value, sub, icon: Icon, trend }) => (
-  <motion.div 
-    whileHover={{ y: -4, x: -4, shadow: "8px 8px 0px 0px #0f172a" }}
-    className="bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[4px_4px_0px_0px_#0f172a] transition-all"
-  >
-    <div className="flex justify-between items-start mb-4">
-      <div className="w-12 h-12 bg-yellow-300 border-2 border-slate-900 text-slate-900 rounded-xl flex items-center justify-center shadow-[2px_2px_0px_0px_#0f172a]">
-        <Icon size={24} />
+function StatCard({ title, value, sub, icon: Icon, trend }: any) {
+  return (
+    <motion.div 
+      whileHover={{ y: -4, x: -4, shadow: "8px 8px 0px 0px #0f172a" }}
+      className="bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[4px_4px_0px_0px_#0f172a] transition-all"
+    >
+      <div className="flex justify-between items-start mb-4">
+        <div className="w-12 h-12 bg-yellow-300 border-2 border-slate-900 text-slate-900 rounded-xl flex items-center justify-center shadow-[2px_2px_0px_0px_#0f172a]">
+          <Icon size={24} />
+        </div>
+        {trend !== undefined && (
+          <span className={`text-xs font-black px-2.5 py-1 rounded-full border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a] ${trend > 0 ? 'bg-emerald-300 text-slate-900' : 'bg-rose-300 text-slate-900'}`}>
+            {trend > 0 ? '↑ High' : '↓ Low'}
+          </span>
+        )}
       </div>
-      {trend !== undefined && (
-        <span className={`text-xs font-black px-2.5 py-1 rounded-full border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a] ${trend > 0 ? 'bg-emerald-300 text-slate-900' : 'bg-rose-300 text-slate-900'}`}>
-          {trend > 0 ? '↑ High' : '↓ Low'}
-        </span>
-      )}
-    </div>
-    <span className="text-4xl font-black text-slate-900 block tracking-tight mb-1">{value}</span>
-    <span className="text-sm font-black text-slate-500 uppercase tracking-wider block">{title}</span>
-    <span className="text-xs font-bold text-slate-400 mt-2 block">{sub}</span>
-  </motion.div>
-);
+      <span className="text-4xl font-black text-slate-900 block tracking-tight mb-1">{value}</span>
+      <span className="text-sm font-black text-slate-500 uppercase tracking-wider block">{title}</span>
+      <span className="text-xs font-bold text-slate-400 mt-2 block">{sub}</span>
+    </motion.div>
+  );
+}
 
-const ProgressBar = ({ label, value, colorClass = "bg-blue-500" }) => (
-  <div className="space-y-2">
-    <div className="flex justify-between text-xs font-black uppercase tracking-wider text-slate-600">
-      <span>{label}</span>
-      <span>{(value * 100).toFixed(0)}%</span>
+function ProgressBar({ label, value, colorClass = "bg-blue-500" }: any) {
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between text-xs font-black uppercase tracking-wider text-slate-600">
+        <span>{label}</span>
+        <span>{(value * 100).toFixed(0)}%</span>
+      </div>
+      <div className="h-4 w-full bg-slate-100 rounded-full border-2 border-slate-900 overflow-hidden shadow-inner">
+        <motion.div 
+          initial={{ width: 0 }}
+          animate={{ width: `${Math.round(value * 100)}%` }}
+          transition={{ duration: 1, ease: "easeOut" }}
+          className={`h-full ${colorClass} border-r-2 border-slate-900`} 
+        />
+      </div>
     </div>
-    <div className="h-4 w-full bg-slate-100 rounded-full border-2 border-slate-900 overflow-hidden shadow-inner">
-      <motion.div 
-        initial={{ width: 0 }}
-        animate={{ width: `${Math.round(value * 100)}%` }}
-        transition={{ duration: 1, ease: "easeOut" }}
-        className={`h-full ${colorClass} border-r-2 border-slate-900`} 
-      />
-    </div>
-  </div>
-);
+  );
+}
 
-const Toast = ({ message, type, onClose }) => {
+function FunnelStep({ label, count, color }: any) {
+  return (
+    <div className={`bg-white border-4 border-slate-900 p-4 rounded-xl shadow-[4px_4px_0px_0px_#0f172a] text-center w-full in-h-[110px] flex flex-col justify-center`}>
+      <div className={`text-3xl font-black ${color}`}>
+        {count.toLocaleString()}
+      </div>
+
+      <div className="text-[10px] font-black uppercase tracking-normal text-slate-500 text-center leading-tight mt-2">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message, type, onClose }: any) {
   useEffect(() => {
     const timer = setTimeout(onClose, 4000);
     return () => clearTimeout(timer);
@@ -454,240 +554,654 @@ const Toast = ({ message, type, onClose }) => {
       <button onClick={onClose} className="ml-4 hover:bg-slate-900/10 p-1 rounded-lg transition-colors"><X size={16} /></button>
     </motion.div>
   );
-};
+}
 
-// ==========================================
-// AUTHENTICATION VIEWS (NEO-BRUTALIST)
-// ==========================================
-
-const AuthInput = ({ label, type = "text", placeholder, icon: Icon, name }) => (
-  <div className="space-y-2 mb-5 w-full text-left">
-    <label className="font-black text-sm uppercase tracking-wider text-slate-700">{label}</label>
-    <div className="relative">
-      {Icon && <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />}
-      <input 
-        name={name}
-        type={type} 
-        placeholder={placeholder} 
-        className={`w-full bg-white border-4 border-slate-900 rounded-xl py-3.5 px-4 focus:outline-none focus:ring-4 focus:ring-yellow-300 transition-all font-bold text-slate-900 placeholder:text-slate-400 shadow-[4px_4px_0px_0px_#0f172a] ${Icon ? 'pl-12' : ''}`} 
-        required
-      />
-    </div>
-  </div>
-);
-
-const AuthLayout = ({ children, title, subtitle, setView }) => (
-  <div className="min-h-screen flex text-slate-900 font-sans selection:bg-blue-300 bg-[#f8fafc] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:24px_24px]">
+function NavItem({ id, label, icon: Icon, activeTab, setActiveTab, sidebarOpen }: any) {
+  return (
     <button 
-      onClick={() => setView('landing')} 
-      className="absolute top-6 left-6 flex items-center gap-2 font-black uppercase tracking-widest text-sm text-slate-600 hover:text-slate-900 transition-colors z-20"
+      onClick={() => setActiveTab(id)} 
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-black text-sm uppercase tracking-wider
+        ${activeTab === id 
+          ? 'bg-blue-500 text-white border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] translate-x-1' 
+          : 'bg-white text-slate-600 border-4 border-transparent hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a] hover:text-slate-900 hover:-translate-y-1'
+        }
+      `}
     >
-      <ArrowLeft size={20} /> Back
+      <Icon size={20} className="shrink-0" />
+      {sidebarOpen && <span className="whitespace-nowrap">{label}</span>}
     </button>
-    
-    {/* Left Side - Graphic (Hidden on mobile) */}
-    <div className="hidden lg:flex w-1/2 bg-blue-500 border-r-4 border-slate-900 flex-col justify-center items-center p-12 relative overflow-hidden">
-       {/* Background pattern */}
-       <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#000_2px,transparent_2px)] [background-size:20px_20px]" />
-       
-       <div className="relative z-10 text-center space-y-6 max-w-lg">
-          <div className="w-24 h-24 bg-yellow-300 rounded-3xl flex items-center justify-center border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] mx-auto mb-8 transform -rotate-6 hover:rotate-0 transition-transform">
-             <Cpu size={48} className="text-slate-900" />
-          </div>
-          <h1 className="text-5xl xl:text-6xl font-black tracking-tighter text-white drop-shadow-[4px_4px_0px_#0f172a] leading-tight">
-             Unlock the <br/>
-             <span className="text-yellow-300">Engine.</span>
-          </h1>
-          <p className="text-lg font-bold text-blue-100 border-l-4 border-pink-400 pl-4 text-left">
-             Access the V4 scoring model. Manage candidate pipelines, deploy configurations, and export parity-locked telemetry.
-          </p>
+  );
+}
+
+// ==========================================
+// COMPREHENSIVE CANDIDATE DRAWER (ATS)
+// ==========================================
+function CandidateExpandedPanel({ c, bd, workflow, updateWorkflow, showToast }: any) {
+  const [tab, setTab] = useState('analysis');
+  const [localNotes, setLocalNotes] = useState(workflow?.notes || '');
+  const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
+  
+  const status = workflow?.status || 'none';
+  
+  const handleStatusChange = async (newStatus: string) => {
+    setIsSavingWorkflow(true);
+    await updateWorkflow(c.candidate_id, newStatus, localNotes);
+    setIsSavingWorkflow(false);
+  };
+
+  const handleNotesSave = async () => {
+    setIsSavingWorkflow(true);
+    await updateWorkflow(c.candidate_id, status, localNotes);
+    setIsSavingWorkflow(false);
+  };
+  
+  const p = c.rawProfile.profile || {};
+  const rs = c.rawProfile.redrob_signals || {};
+  
+  const risks = [];
+  if (bd.honeypot) risks.push("Honeypot Triggered: Inconsistent expert skill claims against total experience duration.");
+  if (rs.notice_period_days > 60) risks.push(`Long Notice Period: ${rs.notice_period_days} days.`);
+  if (!rs.open_to_work_flag) risks.push("Passive Candidate: Not actively marked as open to work.");
+  if ((rs.recruiter_response_rate !== undefined ? rs.recruiter_response_rate : 1) < 0.4) risks.push(`Low Response Rate: ${((rs.recruiter_response_rate || 0)*100).toFixed(0)}% historic platform response rate.`);
+
+  return (
+    <div className="flex flex-col bg-white border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] rounded-2xl overflow-hidden mt-2 mb-4">
+       <div className="flex flex-col sm:flex-row bg-slate-100 border-b-4 border-slate-900 font-black uppercase tracking-wider text-xs sm:text-sm">
+          <button onClick={() => setTab('analysis')} className={`flex-1 py-4 px-2 border-b-4 sm:border-b-0 sm:border-r-4 border-slate-900 transition-colors flex items-center justify-center gap-2 ${tab === 'analysis' ? 'bg-yellow-300' : 'hover:bg-slate-200'}`}><Brain size={18}/> AI Analysis</button>
+          <button onClick={() => setTab('profile')} className={`flex-1 py-4 px-2 border-b-4 sm:border-b-0 sm:border-r-4 border-slate-900 transition-colors flex items-center justify-center gap-2 ${tab === 'profile' ? 'bg-blue-300' : 'hover:bg-slate-200'}`}><User size={18}/> Full Profile</button>
+          <button onClick={() => setTab('workflow')} className={`flex-1 py-4 px-2 transition-colors flex items-center justify-center gap-2 ${tab === 'workflow' ? 'bg-pink-300' : 'hover:bg-slate-200'}`}><ClipboardList size={18}/> Recruiter Workflow</button>
        </div>
+       
+       <div className="p-6 bg-slate-50">
+          {tab === 'analysis' && (
+             bd.honeypot ? (
+               <div className="flex items-center gap-6 bg-white border-4 border-rose-400 p-6 rounded-2xl shadow-[6px_6px_0px_0px_#fb7185] text-rose-600">
+                 <div className="bg-rose-100 p-4 rounded-xl border-4 border-rose-400 shadow-inner"><ShieldAlert size={32} /></div>
+                 <div>
+                   <h4 className="font-black uppercase tracking-wider text-lg mb-2 text-rose-500 drop-shadow-sm">Honeypot Triggered</h4>
+                   <p className="font-bold text-slate-700 leading-relaxed max-w-3xl">Metadata values declare expert qualifications despite conflicting duration history. Baseline floor scoring enforced.</p>
+                 </div>
+               </div>
+             ) : (
+               <div className="flex flex-col xl:flex-row gap-8">
+                 <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
+                   <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
+                     <h4 className="text-sm font-black text-blue-600 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><Briefcase size={18}/> Core Dimensions</h4>
+                     <ProgressBar label="Career Profile" value={bd.career} />
+                     <ProgressBar label="Skills Density" value={bd.skills} />
+                     <ProgressBar label="Experience Match" value={bd.experience} />
+                     <ProgressBar label="Education Tier" value={bd.education} />
+                   </div>
 
-       {/* Floating decorations */}
-       <div className="absolute top-20 right-20 w-16 h-16 bg-pink-500 rounded-full border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] animate-bounce" style={{ animationDuration: '3s' }} />
-       <div className="absolute bottom-20 left-20 w-20 h-20 bg-emerald-400 border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform rotate-12" />
+                   <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
+                     <h4 className="text-sm font-black text-pink-500 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><CheckCircle size={18}/> Fit Indicators</h4>
+                     <ProgressBar label="JD Fit (IDF Rare)" value={bd.jd_fit} colorClass="bg-pink-400" />
+                     <ProgressBar label="Descriptions" value={bd.description} colorClass="bg-pink-400" />
+                     <ProgressBar label="Assessments" value={bd.assessments} colorClass="bg-pink-400" />
+                     <ProgressBar label="Location" value={bd.location} colorClass="bg-pink-400" />
+                   </div>
+
+                   <div className="md:col-span-2 bg-yellow-300 p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex flex-col sm:flex-row justify-between items-center gap-6">
+                     <div className="flex-1 w-full space-y-3">
+                       <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
+                         <span className="text-xs uppercase font-black tracking-widest">Raw Base Math</span>
+                         <span className="font-mono text-lg font-bold bg-white border-4 border-slate-900 px-2 rounded">{bd.base_score.toFixed(6)}</span>
+                       </div>
+                       <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
+                         <span className="text-xs uppercase font-black tracking-widest">Behavioral Mod</span>
+                         <span className="font-mono text-lg font-bold text-blue-600 bg-white border-4 border-blue-600 px-2 rounded">{bd.behavioral_mult.toFixed(4)}x</span>
+                       </div>
+                     </div>
+                     <div className="shrink-0 text-center bg-white border-4 border-slate-900 rounded-2xl p-4 shadow-inner min-w-[160px]">
+                       <span className="text-xs uppercase font-black tracking-widest text-slate-500 block mb-1">Norm. Output</span>
+                       <span className="text-4xl font-black text-emerald-500 tracking-tighter drop-shadow-md">{c.score.toFixed(6)}</span>
+                     </div>
+                   </div>
+                 </div>
+
+                 <div className="w-full xl:w-1/3 bg-slate-900 text-white rounded-2xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_#fde047] p-6 relative overflow-hidden flex flex-col">
+                   <div className="absolute top-0 right-0 bg-yellow-300 text-slate-900 font-black px-4 py-1 rounded-bl-xl border-l-4 border-b-4 border-slate-900 text-xs uppercase tracking-widest flex items-center gap-1">
+                     <Sparkles size={14}/> Nexus Engine
+                   </div>
+                   <h4 className="text-2xl font-black text-yellow-300 uppercase tracking-tighter mb-4 mt-2">AI Justification</h4>
+                   <div className="space-y-4 flex-1">
+                     <p className="text-sm font-bold leading-relaxed text-slate-300">
+                       I have positioned this candidate at <span className="text-white bg-blue-600 px-2 py-0.5 rounded border border-blue-400 shadow-sm">Rank #{c.rank}</span> with a final confidence score of <span className="text-white bg-emerald-600 px-2 py-0.5 rounded border border-emerald-400 shadow-sm">{c.score.toFixed(4)}</span>.
+                     </p>
+                     <div className="p-4 bg-slate-800 border-l-4 border-yellow-300 rounded-r-xl text-sm font-medium text-slate-200 leading-relaxed shadow-inner">
+                       {c.reasoning}
+                     </div>
+                     <p className="text-xs font-bold leading-relaxed text-slate-400">
+                       <strong>Key Drivers:</strong> The positioning is heavily influenced by their {(bd.skills * 100).toFixed(0)}% skill density match and a behavioral multiplier of {bd.behavioral_mult.toFixed(2)}x, placing them {c.rank <= 10 ? 'in the top percentile' : 'within the standard distribution'} of the evaluated pool.
+                     </p>
+                   </div>
+                 </div>
+               </div>
+             )
+          )}
+
+          {tab === 'profile' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 space-y-6">
+                   <CleanCard className="p-6 bg-white">
+                      <h4 className="font-black text-lg uppercase mb-4 border-b-4 border-slate-900 pb-2">Experience Timeline</h4>
+                      <div className="space-y-6">
+                         {c.rawProfile.career_history?.map((job: any, idx: number) => (
+                            <div key={idx} className="border-l-4 border-blue-500 pl-4 relative">
+                               <div className="absolute w-3 h-3 bg-blue-500 rounded-full -left-[8.5px] top-1.5 border-2 border-white"></div>
+                               <div className="font-bold text-slate-900 text-lg">{job.title}</div>
+                               <div className="font-black text-slate-500 text-sm tracking-widest uppercase">{job.company} • {job.duration_months} months</div>
+                               <p className="text-sm font-bold text-slate-600 mt-2 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-200">{job.description}</p>
+                            </div>
+                         ))}
+                         {(!c.rawProfile.career_history || c.rawProfile.career_history.length === 0) && <p className="text-slate-500 font-bold text-sm">No career history provided.</p>}
+                      </div>
+                   </CleanCard>
+                   
+                   <CleanCard className="p-6 bg-white">
+                      <h4 className="font-black text-lg uppercase mb-4 border-b-4 border-slate-900 pb-2">Education & Assessments</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 font-bold">
+                         <div>
+                           <h5 className="font-black text-sm text-slate-400 uppercase tracking-widest mb-3">Education Map</h5>
+                           <div className="space-y-3">
+                             {c.rawProfile.education?.map((edu: any, idx: number) => (
+                               <div key={idx} className="bg-slate-50 p-3 rounded-xl border-2 border-slate-200">
+                                  <div className="font-bold text-slate-900">{edu.degree}</div>
+                                  <div className="font-black text-slate-500 text-xs uppercase tracking-wider mt-1">{edu.tier?.replace('_', ' ')}</div>
+                               </div>
+                             ))}
+                             {(!c.rawProfile.education || c.rawProfile.education.length === 0) && <p className="text-slate-500 font-bold text-sm">No education data.</p>}
+                           </div>
+                         </div>
+                         <div>
+                           <h5 className="font-black text-sm text-slate-400 uppercase tracking-widest mb-3">Platform Assessments</h5>
+                           <div className="space-y-2">
+                             {Object.entries(rs.skill_assessment_scores || {}).map(([key, val]: any) => (
+                               <div key={key} className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border-2 border-slate-200 font-bold text-slate-900 text-sm">
+                                  <span className="capitalize">{key.replace(/_/g, ' ')}</span>
+                                  <span className="text-blue-600 bg-blue-100 px-2 py-0.5 rounded border-2 border-blue-900">{val}/100</span>
+                               </div>
+                             ))}
+                             {Object.keys(rs.skill_assessment_scores || {}).length === 0 && <p className="text-slate-500 font-bold text-sm">No verified assessments.</p>}
+                           </div>
+                         </div>
+                      </div>
+                   </CleanCard>
+                </div>
+
+                <div className="space-y-6 font-bold">
+                   <CleanCard className="p-6 bg-rose-50 border-rose-900 shadow-[6px_6px_0px_0px_#881337]">
+                      <h4 className="font-black text-rose-600 uppercase tracking-wider mb-4 border-b-4 border-rose-900 pb-2 flex items-center gap-2"><AlertTriangle size={18}/> Risk Flags</h4>
+                      {risks.length > 0 ? (
+                        <ul className="space-y-3">
+                          {risks.map((r, i) => <li key={i} className="font-bold text-sm text-rose-800 flex items-start gap-2 bg-rose-100 p-2 rounded-lg border-2 border-rose-200"><X size={16} className="shrink-0 mt-0.5 text-rose-600"/> {r}</li>)}
+                        </ul>
+                      ) : (
+                        <div className="font-black text-emerald-600 flex items-center gap-2 bg-emerald-100 p-3 rounded-lg border-2 border-emerald-300"><Check size={18}/> Clean Profile. No major risk flags detected.</div>
+                      )}
+                   </CleanCard>
+
+                   <CleanCard className="p-6 bg-white">
+                      <h4 className="font-black text-lg uppercase mb-4 border-b-4 border-slate-900 pb-2 flex items-center gap-2"><Award size={18}/> Verified Skills</h4>
+                      <div className="flex flex-wrap gap-2">
+                         {c.rawProfile.skills?.map((s: any, idx: number) => (
+                            <span key={idx} className={`px-2.5 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-lg border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a] ${s.proficiency === 'expert' ? 'bg-yellow-300' : s.proficiency === 'advanced' ? 'bg-emerald-300 text-slate-900' : 'bg-slate-100 text-slate-600'}`}>
+                               {s.name} ({s.duration_months}m)
+                            </span>
+                         ))}
+                         {(!c.rawProfile.skills || c.rawProfile.skills.length === 0) && <p className="text-slate-500 font-bold text-sm">No structured skills logged.</p>}
+                      </div>
+                   </CleanCard>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'workflow' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-6">
+                <div>
+                  <h4 className="font-black text-2xl uppercase tracking-tighter text-slate-900">Recruiter Decision</h4>
+                  <p className="font-bold text-slate-500 text-sm mt-1">Assign a status to route this candidate in the ATS pipeline (Saves to Database).</p>
+                </div>
+                
+                <div className="space-y-4">
+                  <button 
+                    disabled={isSavingWorkflow}
+                    onClick={() => handleStatusChange('strong')} 
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border-4 transition-all font-black uppercase tracking-widest ${status === 'strong' ? 'bg-emerald-400 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] translate-x-1 translate-y-1' : 'bg-white border-emerald-400 text-emerald-700 hover:bg-emerald-50'}`}
+                  >
+                    <div className="flex items-center gap-3"><ThumbsUp size={20}/> Strong Fit</div>
+                    {status === 'strong' && <CheckCircle size={20} className="text-slate-900" />}
+                  </button>
+                  
+                  <button 
+                    disabled={isSavingWorkflow}
+                    onClick={() => handleStatusChange('review')} 
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border-4 transition-all font-black uppercase tracking-widest ${status === 'review' ? 'bg-yellow-300 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] translate-x-1 translate-y-1' : 'bg-white border-yellow-400 text-yellow-700 hover:bg-yellow-50'}`}
+                  >
+                    <div className="flex items-center gap-3"><Clock size={20}/> Review Later</div>
+                    {status === 'review' && <CheckCircle size={20} className="text-slate-900" />}
+                  </button>
+
+                  <button 
+                    disabled={isSavingWorkflow}
+                    onClick={() => handleStatusChange('reject')} 
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border-4 transition-all font-black uppercase tracking-widest ${status === 'reject' ? 'bg-rose-400 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] translate-x-1 translate-y-1' : 'bg-white border-rose-400 text-rose-700 hover:bg-rose-50'}`}
+                  >
+                    <div className="flex items-center gap-3"><ThumbsDown size={20}/> Reject Candidate</div>
+                    {status === 'reject' && <CheckCircle size={20} className="text-slate-900" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4 flex flex-col h-full bg-white border-4 border-slate-900 p-6 rounded-2xl shadow-[6px_6px_0px_0px_#0f172a]">
+                 <h4 className="font-black text-xl uppercase tracking-tighter flex items-center gap-2"><FileText size={20}/> Evaluation Notes</h4>
+                 <textarea 
+                    value={localNotes}
+                    onChange={(e) => setLocalNotes(e.target.value)}
+                    placeholder="Add context on technical screening, behavioral red flags, or specific JD alignment notes..."
+                    className="w-full flex-1 min-h-[150px] p-4 bg-slate-50 border-4 border-slate-900 rounded-xl font-bold text-sm focus:outline-none focus:ring-4 focus:ring-pink-300 transition-all resize-none"
+                 />
+                 <BrutalButton 
+                    disabled={isSavingWorkflow}
+                    onClick={handleNotesSave} 
+                    variant="primary" 
+                    className="w-full py-4 mt-2"
+                  >
+                    {isSavingWorkflow ? (
+                      <><RefreshCw size={20} className="animate-spin" /> Transmitting...</>
+                    ) : (
+                      "Save Pipeline Notes to DB"
+                    )}
+                 </BrutalButton>
+              </div>
+            </div>
+          )}
+       </div>
     </div>
+  );
+}
 
-    {/* Right Side - Form */}
-    <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-white p-8 sm:p-10 rounded-3xl border-4 border-slate-900 shadow-[12px_12px_0px_0px_#0f172a]"
-      >
-        <div className="mb-10 text-center">
-          <h2 className="text-4xl font-black tracking-tighter text-slate-900 mb-2 uppercase">{title}</h2>
-          <p className="text-slate-500 font-bold">{subtitle}</p>
+// ==========================================
+// NEO-BRUTALIST ERROR & ONBOARDING PAGE
+// ==========================================
+function SupabaseFallbackConfigView({ onBypass }: { onBypass: () => void }) {
+  return (
+    <div className="min-h-screen text-slate-900 bg-slate-100 flex flex-col items-center justify-center p-6 selection:bg-rose-300 bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:24px_24px]">
+      <div className="max-w-2xl w-full bg-white border-4 border-slate-900 rounded-3xl p-8 sm:p-10 shadow-[12px_12px_0px_0px_#000] relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-4 bg-rose-400 border-b-4 border-slate-900" />
+        
+        <div className="flex items-center gap-4 mb-6 mt-4">
+          <div className="w-16 h-16 bg-rose-400 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform -rotate-6">
+            <ShieldAlert size={36} />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black uppercase tracking-tight">Supabase Connection Required</h1>
+            <p className="text-slate-500 font-bold text-xs uppercase tracking-wider mt-1">Status: Unconfigured Environment Parameters</p>
+          </div>
         </div>
-        {children}
-      </motion.div>
-    </div>
-  </div>
-);
 
-const LoginView = ({ setView, onLogin }) => (
-  <AuthLayout title="Welcome Back" subtitle="Enter your credentials to access the workspace." setView={setView}>
-    <form onSubmit={(e) => { 
-      e.preventDefault(); 
-      const formData = new FormData(e.currentTarget);
-      onLogin(formData.get('email'), formData.get('password')); 
-    }}>
-      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
-      <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
-      
-      <div className="flex items-center justify-between mt-2 mb-8">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" className="w-5 h-5 border-4 border-slate-900 rounded bg-white text-blue-500 focus:ring-yellow-300 focus:ring-offset-0 transition-all checked:bg-blue-500" />
-          <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">Remember Me</span>
-        </label>
-        <button type="button" onClick={() => setView('forgotPassword')} className="text-sm font-black text-pink-500 hover:text-pink-600 hover:underline uppercase tracking-wider transition-colors">
-          Lost Key?
-        </button>
+        <div className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] mb-8 space-y-4">
+          <p className="font-bold text-sm text-slate-700 leading-relaxed">
+            The workspace was unable to establish a secure handshake with the Supabase client library. For security, detailed telemetry auditing, and pipeline persistence, configuration parameters are required for production.
+          </p>
+
+          <h3 className="font-black text-xs uppercase tracking-widest text-slate-500 pt-2">Database Setup instructions:</h3>
+          <ol className="list-decimal list-inside text-xs font-bold text-slate-600 space-y-2 pl-2">
+            <li>Ensure <code className="bg-slate-200 px-1 py-0.5 rounded text-rose-600 font-mono">./lib/supabase</code> is correctly exported.</li>
+            <li>Run the required schema migrations within your Supabase SQL Editor.</li>
+            <li>Restart the workspace development compiler.</li>
+          </ol>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-4 justify-between items-center pt-4 border-t-4 border-slate-100">
+          <div className="text-left w-full sm:w-auto">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-400 block">Demonstration Bypass</span>
+            <span className="text-xs font-bold text-slate-500 block">Runs localized isomorphic offline parity matrix only.</span>
+          </div>
+          <BrutalButton onClick={onBypass} variant="yellow" className="w-full sm:w-auto py-3 px-6 text-sm">
+            Bypass to Local Storage Sandbox <ArrowRight size={18} />
+          </BrutalButton>
+        </div>
       </div>
-
-      <BrutalButton type="submit" variant="primary" className="w-full py-4 text-lg">
-        Initialize Session <ArrowRight size={24} />
-      </BrutalButton>
-    </form>
-
-    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
-      <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
-        No clearance?{' '}
-        <button type="button" onClick={() => setView('signup')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
-          Request Access
-        </button>
-      </p>
     </div>
-  </AuthLayout>
-);
-
-const SignupView = ({ setView, onSignup }) => (
-  <AuthLayout title="Create Profile" subtitle="Register a new operator identity." setView={setView}>
-    <form onSubmit={(e) => { 
-      e.preventDefault(); 
-      const formData = new FormData(e.currentTarget);
-      onSignup(formData.get('fullName'), formData.get('email'), formData.get('password')); 
-    }}>
-      <AuthInput name="fullName" label="Full Name" type="text" placeholder="Jane Doe" icon={User} />
-      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
-      <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
-      
-      <BrutalButton type="submit" variant="pink" className="w-full py-4 text-lg mt-6">
-        Generate Identity <Zap size={24} />
-      </BrutalButton>
-    </form>
-
-    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
-      <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
-        Already registered?{' '}
-        <button type="button" onClick={() => setView('login')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
-          Return to Login
-        </button>
-      </p>
-    </div>
-  </AuthLayout>
-);
-
-const ForgotPasswordView = ({ setView }) => (
-  <AuthLayout title="System Reset" subtitle="We'll send a recovery link to your terminal." setView={setView}>
-    <form onSubmit={(e) => { e.preventDefault(); setView('login'); }}>
-      <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
-      <BrutalButton type="submit" variant="yellow" className="w-full py-4 text-lg mt-6">
-        Transmit Link <ArrowRight size={24} />
-      </BrutalButton>
-    </form>
-    <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
-      <button type="button" onClick={() => setView('login')} className="text-sm font-black text-slate-600 hover:text-slate-900 uppercase tracking-wider hover:underline transition-colors">
-        Cancel Reset Sequence
-      </button>
-    </div>
-  </AuthLayout>
-);
+  );
+}
 
 // ==========================================
-// MAIN APPLICATION ENTRY
+// MAIN WORKSPACE INTERFACE
 // ==========================================
-
 export default function App() {
-  // Navigation State: 'landing', 'login', 'signup', 'forgotPassword', 'dashboard'
   const [view, setView] = useState('landing');
   const [activeTab, setActiveTab] = useState('dashboard'); 
   const [sidebarOpen, setSidebarOpen] = useState(true); 
-  const [candidates, setCandidates] = useState(INITIAL_CANDIDATES);
+  const [candidates, setCandidates] = useState<any[]>([]); // Default initialized empty as requested
   const [refDateString, setRefDateString] = useState("2025-01-01");
   const [searchQuery, setSearchQuery] = useState("");
   const [comparisonMode, setComparisonMode] = useState(false);
-  const [expandedRow, setExpandedRow] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
-  const [toast, setToast] = useState(null); 
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type?: string } | null>(null); 
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Execution Control plane representation
+  const [executionPlane, setExecutionPlane] = useState<'local' | 'remote'>('local');
 
-  // --- AUTH STATE & POPUP ---
-  const [currentUser, setCurrentUser] = useState(null);
-  const [registeredUsers, setRegisteredUsers] = useState([{ email: 'agent@nexus.ai', name: 'Nexus Agent' }]);
+  // Sandbox indicator flags
+  const [isSandboxMode, setIsSandboxMode] = useState(false);
+
+  // Authentication Sequence Gatekeeper
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Recruiter Workflow State
+  const [candidateWorkflows, setCandidateWorkflows] = useState<any>({});
+  
+  // Selected Historical Run View State
+  const [activeHistoricalRun, setActiveHistoricalRun] = useState<any | null>(null);
+
+  // Backend States
+  const [rankingRuns, setRankingRuns] = useState<any[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const showToast = (message: string, type = 'success') => setToast({ message, type });
+
+  // Custom database router abstraction
+  const currentDb = useMemo(() => {
+    if (supabase) return supabase;
+    return createMockSupabase();
+  }, []);
+
+  // Check if supabase variables are actually missing
   useEffect(() => {
-  const loadUser = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    if (!supabase) {
+      // Autodeclares sandbox environment status to enable immediate preview
+      console.warn("Nexus Platform initialized inside preview-isolated sandbox. LocalStorage drivers enabled.");
+    }
+  }, []);
 
-    if (user) {
-      setCurrentUser({
-        email: user.email,
-        name: user.email.split("@")[0],
-        initials: user.email.substring(0, 2).toUpperCase(),
-      });
+  // ==========================================
+  // SYNC CANDIDATE WORKFLOW STATUS FROM LOCAL NOTES
+  // ==========================================
+  const updateWorkflow = (id: string, newStatus: string, notes: string) => {
+    setCandidateWorkflows((prev: any) => {
+      const updated = { ...prev, [id]: { status: newStatus, notes } };
+      // Persist workflow changes directly to DB/Sandbox
+      saveWorkflowToDb(id, newStatus, notes);
+      return updated;
+    });
+  };
 
-      setView("dashboard");
+  const saveWorkflowToDb = async (candidateId: string, status: string, notes: string) => {
+    if (!currentUser) return;
+    try {
+      const { error } = await currentDb
+        .from('candidate_workflows')
+        .upsert({
+          user_id: currentUser.id,
+          candidate_id: candidateId,
+          status,
+          notes,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error("Error saving workflow status to Supabase:", error);
+      } else {
+        showToast("Workflow telemetry securely synchronized to backend.");
+      }
+    } catch (err) {
+      console.error("saveWorkflowToDb Catch:", err);
     }
   };
 
-  loadUser();
-}, []);
+  const loadWorkflowsFromDb = async (userId: string) => {
+    try {
+      const { data, error } = await currentDb
+        .from('candidate_workflows')
+        .select('*')
+        .order('updated_at', { ascending: false });
 
-  const showToast = (message, type = 'success') => setToast({ message, type });
-
-  const getInitials = (name) => {
-    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || '??';
+      if (!error && data) {
+        const workflowMap = {} as any;
+        data.forEach((w: any) => {
+          workflowMap[w.candidate_id] = {
+            status: w.status,
+            notes: w.notes
+          };
+        });
+        setCandidateWorkflows(workflowMap);
+      }
+    } catch (e) {
+      console.error("loadWorkflows error:", e);
+    }
   };
 
-  const handleLogin = async (email, password) => {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  // ==========================================
+  // LOAD USER PROFILE FROM DATABASE
+  // ==========================================
+  const loadUserProfile = async (userId: string) => {
+    try {
+      const { data, error } = await currentDb
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
 
-  if (error) {
-    showToast(error.message, "error");
-    return;
-  }
+      if (error && error.code !== 'PGRST116') {
+        console.error("Profile load error:", error);
+        return null;
+      }
 
-  setCurrentUser({
-    email: data.user.email,
-    name: data.user.email.split("@")[0],
-    initials: data.user.email.substring(0, 2).toUpperCase(),
-  });
+      if (data) {
+        const profile = { id: userId, name: data.name, email: data.email || '', role: data.role || 'Level 4 (Architect)' };
+        setUserProfile(profile);
+        return profile;
+      }
+    } catch (error) {
+      console.error("loadUserProfile error:", error);
+    }
+    return null;
+  };
 
-  setView("dashboard");
-  showToast("Login successful");
-};
+  // ==========================================
+  // BACKEND SESSION SYNC (PREVENTS RACING FLASHER)
+  // ==========================================
+  useEffect(() => {
+    const restoreSession = async () => {
+      setIsAuthLoading(true);
+      try {
+        const { data: { user } } = await currentDb.auth.getUser();
+        if (user) {
+          const profile = await loadUserProfile(user.id);
+          if (profile) {
+            setCurrentUser(profile);
+            await loadWorkflowsFromDb(user.id);
+            setView('dashboard');
+          }
+        }
+      } catch (error) {
+        console.error("Session restore error:", error);
+      } finally {
+        // Safe timeout representation for UX loading loop
+        setTimeout(() => {
+          setIsAuthLoading(false);
+        }, 1200);
+      }
+    };
+    restoreSession();
 
-  const handleSignup = (name, email, password) => {
+    const { data: { subscription } } = currentDb.auth.onAuthStateChange(async (event: any, session: any) => {
+      if (session?.user) {
+        const profile = await loadUserProfile(session.user.id);
+        if (profile) {
+          setCurrentUser(profile);
+          await loadWorkflowsFromDb(session.user.id);
+        }
+      } else {
+        setCurrentUser(null);
+        setUserProfile(null);
+      }
+    });
+
+    return () => subscription?.unsubscribe();
+  }, []);
+
+  // ==========================================
+  // LOAD RANKING RUNS FROM DATABASE
+  // ==========================================
+  const fetchRuns = async () => {
+    if (!currentUser) return;
+    try {
+      const { data, error } = await currentDb
+        .from('ranking_runs')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Ranking runs fetch error:", error);
+        return;
+      }
+
+      if (data) {
+        const runs = data.map((r: any) => ({
+          id: r.id,
+          date: r.created_at ? r.created_at.split('T')[0] : '',
+          timestamp: new Date(r.created_at).getTime(),
+          candidates: r.total_candidates,
+          topScore: r.top_score,
+          status: 'Completed',
+          filename: r.filename,
+          top_results: r.top_results // Telemetry JSON payload
+        }));
+        setRankingRuns(runs);
+      }
+    } catch (error) {
+      console.error("Ranking runs error:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchRuns();
+    }
+  }, [currentUser]);
+
+  // ==========================================
+  // REGISTER / LOGIN / LOGOUT HANDLERS
+  // ==========================================
+  const handleSignup = async (name: string, email: string, password: string) => {
     if (!name || !email || !password) {
-      showToast("Please fill out all identity fields.", "error");
+      showToast("Please provide all required fields.", "error");
       return;
     }
-    const existing = registeredUsers.find(u => u.email === email);
-    if (existing) {
-      showToast("Identity already exists. Please return to login.", "error");
-    } else {
-      const newUser = { email, name };
-      setRegisteredUsers([...registeredUsers, newUser]);
-      setCurrentUser({ ...newUser, initials: getInitials(name) });
-      setView('dashboard');
-      showToast("Identity generated successfully.");
+    try {
+      const { data, error } = await currentDb.auth.signUp({ email, password, options: { data: { full_name: name } } });
+
+      if (error) {
+        showToast(error.message || "Registration failed.", "error");
+        return;
+      }
+
+      if (data.user) {
+        const { error: profileError } = await currentDb
+          .from('user_profiles')
+          .upsert({
+            user_id: data.user.id,
+            name,
+            email,
+            role: 'Level 4 (Architect)',
+            created_at: new Date().toISOString()
+          });
+
+        if (profileError) console.error("Profile sync error:", profileError);
+
+        const profile = { id: data.user.id, name, email, role: 'Level 4 (Architect)' };
+        setCurrentUser(profile);
+        setUserProfile(profile);
+        setView('dashboard');
+        showToast("Identity registered securely.");
+      }
+    } catch (err) {
+      showToast("Registration failed.", "error");
+      console.error(err);
     }
+  };
+
+  const handleLogin = async (email: string, password: string) => {
+    if (!email || !password) {
+      showToast("Please provide both email and password.", "error");
+      return;
+    }
+    try {
+      const { data, error } = await currentDb.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        showToast("Invalid credentials or unregistered identity.", "error");
+        return;
+      }
+
+      if (data.user) {
+        const profile = await loadUserProfile(data.user.id);
+        if (profile) setCurrentUser(profile);
+        setView('dashboard');
+        showToast(`Terminal Authorized. Welcome back!`);
+      }
+    } catch (err) {
+      showToast("Authentication failed.", "error");
+      console.error(err);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await currentDb.auth.signOut();
+      showToast("Session terminated.");
+    } catch (e) {
+      console.error("Logout failed:", e);
+    }
+    setCurrentUser(null);
+    setUserProfile(null);
+    setCandidates([]);
+    setRankingRuns([]);
+    setActiveHistoricalRun(null);
+    setView('landing');
+  };
+
+  // ==========================================
+  // SAVE RUN HISTORY TO DATABASE (WITH FULL TELEMETRY JSON)
+  // ==========================================
+  const saveRankingRun = async (filename: string, candidatesCount: number, maxScore: string, topResults: any[]) => {
+    if (!currentUser) return;
+    try {
+      const { error } = await currentDb
+        .from('ranking_runs')
+        .insert({
+          user_id: currentUser.id,
+          filename: filename || 'upload',
+          total_candidates: candidatesCount,
+          top_score: parseFloat(parseFloat(maxScore).toFixed(6)),
+          top_results: topResults, // Saved top results array payload
+          created_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error("Failed to save ranking run telemetry:", error);
+      } else {
+        await fetchRuns(); // reload runs immediately
+      }
+    } catch (err) {
+      console.error("saveRankingRun error:", err);
+    }
+  };
+
+  const getInitials = (name: string) => {
+    if (!name) return 'AD';
+    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'AD';
   };
 
   const referenceDate = useMemo(() => {
@@ -718,68 +1232,91 @@ export default function App() {
     };
   }, [filteredRankedData]);
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
+  const funnelStats = useMemo(() => {
+    if (rankedData.length === 0) {
+      return { uploaded: 0, qualified: 0, shortlisted: 0, interviewReady: 0, finalists: 0 };
+    }
+    return {
+      uploaded: rankedData.length,
+      qualified: rankedData.filter(c => c.score >= 0.50).length,
+      shortlisted: rankedData.filter(c => c.score >= 0.75).length,
+      interviewReady: rankedData.filter(c => c.score >= 0.90).length,
+      finalists: rankedData.filter(c => c.score >= 0.95).length
+    };
+  }, [rankedData]);
+
+  // ==========================================
+  // PIPELINE FILE PARSING
+  // ==========================================
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
+    setActiveHistoricalRun(null); // Clear historical state upon new evaluation input
 
-    const reader = new FileReader();
-    reader.onload = async(event) => {
-      // Yield to main thread to allow "Processing..." UI to render
-      setTimeout(async () => {
-        const text = event.target.result;
-        let parsed = [];
-        try {
-          const data = JSON.parse(text);
-          parsed = Array.isArray(data) ? data : [data];
-        } catch (err) {
-          const lines = text.split(/\r?\n/); 
-          for (const line of lines) {
-            if (line.trim()) {
-              try { 
-                parsed.push(JSON.parse(line)); 
-              } catch (e) {
-                console.warn("Skipping invalid JSON line:", line);
-              }
-            }
+    try {
+      const CHUNK_SIZE = 512 * 1024; 
+      let offset = 0;
+      let leftover = '';
+      let parsed: any[] = [];
+
+      while (offset < file.size) {
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const text = await slice.text();
+        const lines = (leftover + text).split(/\r?\n/);
+        leftover = lines.pop() || ''; 
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try { parsed.push(JSON.parse(line)); } catch(e) {}
           }
         }
-        if (parsed.length > 0) {
+        offset += CHUNK_SIZE;
+        await new Promise(r => setTimeout(r, 0)); 
+      }
+      if (leftover.trim()) {
+         try { parsed.push(JSON.parse(leftover)); } catch(e) {}
+      }
+
+      if (parsed.length > 0) {
+        const tempRanked = rankCandidates(parsed, referenceDate);
+        const maxScore = tempRanked.length > 0 ? Math.max(...tempRanked.map(r => r.score)) : 0;
+
+        // Extrapolate detailed top results array for database save telemetry
+        const top100Results = tempRanked.slice(0, 100).map(r => ({
+          candidate_id: r.candidate_id,
+          rank: r.rank,
+          score: r.score,
+          reasoning: r.reasoning,
+          breakdown: r.breakdown,
+          rawProfile: r.rawProfile
+        }));
+
+        await saveRankingRun(file.name, parsed.length, maxScore.toFixed(4), top100Results);
+
         setCandidates(parsed);
-      
-        try {
-          const {
-            data: { user },
-          } = await supabase.auth.getUser();
-
-          if (user) {
-            await supabase.from("ranking_runs").insert({
-              user_id: user.id,
-              filename: file.name,
-              total_candidates: parsed.length,
-              top_score: 0
-            });
-          }
-        } catch (err) {
-          console.error("Failed to save ranking run:", err);
-        }
-
-        showToast(`Successfully loaded ${parsed.length} candidates.`);
-        } else {
-          showToast("No valid JSON candidates found in file.", "error");
-        }
-        setIsUploading(false);
-      }, 50);
-    };
-    reader.readAsText(file);
-    e.target.value = null; 
+        showToast(`Successfully evaluated ${parsed.length} candidates.`);
+      } else {
+        showToast("No valid JSON candidates found in file.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to process file.", "error");
+    } finally {
+      setIsUploading(false);
+      e.target.value = ''; 
+    }
   };
 
-  const seedMoreCandidates = () => {
-    const generated = [...INITIAL_CANDIDATES];
+  // ==========================================
+  // CONTROLLED DEMO MODE GENERATOR (ISOLATED)
+  // ==========================================
+  const seedMoreCandidates = async () => {
+    setActiveHistoricalRun(null); // Clear history run focus state
+    const generated = [];
     const titles = ["ML Architect", "Deep Learning Eng", "Data Engineer", "Python Backend"];
-    for (let i = 1; i <= 40; i++) {
+    for (let i = 1; i <= 25; i++) {
       const yoe = Number((3 + Math.random() * 8).toFixed(1));
       generated.push({
         candidate_id: `cand-gen-${Math.random().toString(36).substr(2, 6)}`,
@@ -790,14 +1327,39 @@ export default function App() {
         redrob_signals: { last_active_date: "2024-11-05", open_to_work_flag: true, recruiter_response_rate: 0.8, notice_period_days: 30, skill_assessment_scores: { "python": 85 }, willing_to_relocate: true }
       });
     }
+    
     setCandidates(generated);
-    showToast("Generated 40 mock candidate profiles.");
+    const tempRanked = rankCandidates(generated, referenceDate);
+    const maxScore = tempRanked.length > 0 ? Math.max(...tempRanked.map(r => r.score)) : 0;
+
+    const top10Results = tempRanked.slice(0, 10).map(r => ({
+      candidate_id: r.candidate_id,
+      rank: r.rank,
+      score: r.score,
+      reasoning: r.reasoning,
+      breakdown: r.breakdown,
+      rawProfile: r.rawProfile
+    }));
+
+    await saveRankingRun('Demo Synthetic Pool', generated.length, maxScore.toFixed(4), top10Results);
+    showToast("Generated synthetic candidate pool & stored telemetry to Supabase.");
+  };
+
+  const handleSelectHistoricalRun = (run: any) => {
+    if (run.top_results && Array.isArray(run.top_results) && run.top_results.length > 0) {
+      setActiveHistoricalRun(run);
+      showToast(`Viewing historical results from: ${run.filename}`);
+      setActiveTab('candidates');
+    } else {
+      showToast("Selected run has no stored candidate telemetry. Metadata only.", "error");
+    }
   };
 
   const downloadSubmissionCsv = () => {
-    if (!filteredRankedData || filteredRankedData.length === 0) return;
+    const dataToExport = activeHistoricalRun ? activeHistoricalRun.top_results : filteredRankedData;
+    if (!dataToExport || dataToExport.length === 0) return;
     const header = ["candidate_id", "rank", "score", "reasoning"];
-    const rows = filteredRankedData.slice(0, 100).map(c => [
+    const rows = dataToExport.slice(0, 100).map((c: any) => [
       c.candidate_id, c.rank, c.score.toFixed(6), `"${c.reasoning.replace(/"/g, '""')}"`
     ]);
     const csvContent = "data:text/csv;charset=utf-8," + [header.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -810,7 +1372,7 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const copyToClipboard = (text) => {
+  const copyToClipboard = (text: string) => {
     const tempTextArea = document.createElement("textarea");
     tempTextArea.value = text;
     document.body.appendChild(tempTextArea);
@@ -832,32 +1394,27 @@ export default function App() {
     backgroundSize: '24px 24px'
   };
 
-  const NavItem = ({ id, label, icon: Icon }) => (
-    <button 
-      onClick={() => setActiveTab(id)} 
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-black text-sm uppercase tracking-wider
-        ${activeTab === id 
-          ? 'bg-blue-500 text-white border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] translate-x-1' 
-          : 'bg-white text-slate-600 border-4 border-transparent hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a] hover:text-slate-900 hover:-translate-y-1'
-        }
-      `}
-    >
-      <Icon size={20} className="shrink-0" />
-      {sidebarOpen && <span className="whitespace-nowrap">{label}</span>}
-    </button>
-  );
+  // Redirect to configurations fallback panel if supabase is missing and override is unselected
+  if (!supabase && !isSandboxMode) {
+    return <SupabaseFallbackConfigView onBypass={() => {
+      setIsSandboxMode(true);
+      showToast("Offline local sandbox mode activated successfully.", "yellow");
+    }} />;
+  }
 
-  // --- ROUTING RENDERER ---
+  // Initializing state layout
+  if (isAuthLoading) {
+    return null;
+  }
+
   const renderContent = () => {
-    if (view === 'login') return <LoginView setView={setView} onLogin={handleLogin} />;
-    if (view === 'signup') return <SignupView setView={setView} onSignup={handleSignup} />;
-    if (view === 'forgotPassword') return <ForgotPasswordView setView={setView} />;
+    if (view === 'login') return <LoginView setView={setView} onLogin={handleLogin} currentUser={currentUser} />;
+    if (view === 'signup') return <SignupView setView={setView} onSignup={handleSignup} currentUser={currentUser} />;
+    if (view === 'forgotPassword') return <ForgotPasswordView setView={setView} currentUser={currentUser} />;
 
     if (view === 'landing') {
       return (
         <div className="min-h-screen text-slate-900 font-sans selection:bg-blue-300 relative overflow-hidden" style={dottedGrid}>
-          
-          {/* Navigation - Neo-Brutalist */}
           <nav className="fixed top-6 inset-x-0 mx-auto w-[95%] max-w-6xl bg-white border-4 border-slate-900 rounded-2xl px-6 py-4 flex justify-between items-center z-50 shadow-[8px_8px_0px_0px_#0f172a]">
               <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-yellow-300 rounded-xl flex items-center justify-center border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
@@ -869,12 +1426,14 @@ export default function App() {
                   <button className="hover:text-blue-600 hover:-translate-y-1 transition-all">Platform</button>
                   <button className="hover:text-pink-500 hover:-translate-y-1 transition-all">Engine</button>
               </div>
-              <BrutalButton type="button" onClick={() => setView('login')} variant="primary" className="py-2.5 px-6 text-sm">
+              <BrutalButton type="button" onClick={() => {
+                if (currentUser) setView('dashboard');
+                else setView('login');
+              }} variant="primary" className="py-2.5 px-6 text-sm">
                   Login / Enter
               </BrutalButton>
           </nav>
 
-          {/* Hero Section */}
           <section className="relative pt-48 pb-20 px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16 min-h-screen">
               <div className="flex-1 space-y-8 z-10 text-center lg:text-left">
                   <div className="inline-flex items-center gap-2 px-4 py-2 bg-pink-300 border-4 border-slate-900 rounded-xl font-black text-xs uppercase tracking-widest text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform -rotate-2">
@@ -891,7 +1450,10 @@ export default function App() {
                   </p>
                   
                   <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start pt-6">
-                      <BrutalButton type="button" onClick={() => setView('login')} variant="primary" className="text-xl py-4 px-8">
+                      <BrutalButton type="button" onClick={() => {
+                          if (currentUser) setView('dashboard');
+                          else setView('login');
+                      }} variant="primary" className="text-xl py-4 px-8">
                           Launch Dashboard <ArrowRight size={24} />
                       </BrutalButton>
                       <BrutalButton type="button" onClick={seedMoreCandidates} variant="yellow" className="text-lg py-4 px-8">
@@ -900,7 +1462,6 @@ export default function App() {
                   </div>
               </div>
 
-              {/* Floating UI Elements */}
               <div className="flex-1 relative w-full h-[500px] hidden lg:block perspective-1000">
                   <motion.div 
                     animate={{ y: [0, -15, 0], rotate: [3, 5, 3] }} 
@@ -911,13 +1472,11 @@ export default function App() {
                       <span className="font-black text-sm uppercase text-slate-900 tracking-wider">Live Evaluation</span>
                       <span className="w-4 h-4 bg-emerald-400 rounded-full animate-pulse border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]" />
                     </div>
-                    <div className="space-y-4">
-                      {rankedData.slice(0, 2).map((c, i) => (
-                        <div key={i} className="flex justify-between items-center bg-slate-100 p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
-                          <span className="font-bold text-sm text-slate-800 truncate max-w-[150px]">{c.rawProfile.profile?.current_title}</span>
-                          <span className="font-black text-blue-600 bg-blue-100 px-2 py-1 rounded-md border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">{c.score.toFixed(3)}</span>
-                        </div>
-                      ))}
+                    <div className="space-y-4 font-bold">
+                      <div className="flex justify-between items-center bg-slate-100 p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
+                        <span className="font-bold text-sm text-slate-800 truncate max-w-[150px]">Senior ML Engineer</span>
+                        <span className="font-black text-blue-600 bg-blue-100 px-2 py-1 rounded-md border-2 border-slate-900 shadow-[2px_2px_0px_0px_#0f172a]">0.985</span>
+                      </div>
                     </div>
                   </motion.div>
 
@@ -939,10 +1498,15 @@ export default function App() {
     return (
       <div className="min-h-screen text-slate-900 font-sans flex overflow-hidden selection:bg-blue-300" style={dottedGrid}>
         
-        {/* Floating Sidebar (Neo-Brutalist) */}
-        <div className={`p-4 transition-all duration-300 ${sidebarOpen ? 'w-72' : 'w-24 shrink-0'}`}>
+        {/* Global offline alert banner */}
+        {isSandboxMode && (
+          <div className="fixed top-0 inset-x-0 h-8 bg-yellow-300 border-b-4 border-slate-900 z-50 flex items-center justify-center font-black uppercase text-xs tracking-wider gap-2 select-none shadow-md">
+             <AlertTriangle size={14}/> Warning: Sandbox Mode Active. Telemetry saved locally.
+          </div>
+        )}
+
+        <div className={`p-4 transition-all duration-300 ${sidebarOpen ? 'w-72' : 'w-24 shrink-0'} ${isSandboxMode ? 'pt-12' : ''}`}>
           <aside className="bg-white border-4 border-slate-900 h-full rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] flex flex-col z-20 overflow-hidden relative">
-            
             <div className="h-24 flex items-center px-6 justify-between shrink-0 border-b-4 border-slate-900 bg-yellow-300">
               <div className="flex items-center gap-3 overflow-hidden">
                 <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0 border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
@@ -953,13 +1517,14 @@ export default function App() {
             </div>
             
             <nav className="flex-1 py-6 px-4 space-y-3 overflow-y-auto">
-              <NavItem id="dashboard" label="Overview" icon={Layout} />
-              <NavItem id="candidates" label="Shortlist" icon={Users} />
-              <NavItem id="settings" label="Parameters" icon={Settings} />
+              <NavItem id="dashboard" label="Overview" icon={Layout} activeTab={activeTab} setActiveTab={setActiveTab} sidebarOpen={sidebarOpen} />
+              <NavItem id="candidates" label="Shortlist" icon={Users} activeTab={activeTab} setActiveTab={setActiveTab} sidebarOpen={sidebarOpen} />
+              <NavItem id="profile" label="Operator Profile" icon={User} activeTab={activeTab} setActiveTab={setActiveTab} sidebarOpen={sidebarOpen} />
+              <NavItem id="settings" label="Parameters" icon={Settings} activeTab={activeTab} setActiveTab={setActiveTab} sidebarOpen={sidebarOpen} />
             </nav>
 
             <div className="p-4 shrink-0 border-t-4 border-slate-900 bg-slate-100">
-              <button onClick={() => { setView('landing'); setCurrentUser(null); }} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:text-white bg-white hover:bg-rose-500 rounded-xl transition-all font-black text-sm uppercase tracking-wider border-4 border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a]">
+              <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:text-white bg-white hover:bg-rose-500 rounded-xl transition-all font-black text-sm uppercase tracking-wider border-4 border-slate-900 hover:shadow-[4px_4px_0px_0px_#0f172a]">
                 <LogOut size={20} className="shrink-0" />
                 {sidebarOpen && <span className="whitespace-nowrap">Sign Out</span>}
               </button>
@@ -967,16 +1532,13 @@ export default function App() {
           </aside>
         </div>
 
-        {/* Main Content Area */}
-        <main className="flex-1 flex flex-col h-screen overflow-hidden pt-4 pr-4 pb-4">
-          
-          {/* Top Floating Navbar */}
+        <main className={`flex-1 flex flex-col h-screen overflow-hidden pt-4 pr-4 pb-4 ${isSandboxMode ? 'pt-12' : ''}`}>
           <header className="h-20 bg-white border-4 border-slate-900 rounded-2xl px-6 flex items-center justify-between z-10 shrink-0 shadow-[8px_8px_0px_0px_#0f172a] mb-6">
             <div className="flex items-center gap-6 flex-1 min-w-0">
               <button onClick={() => setSidebarOpen(!sidebarOpen)} className="w-10 h-10 bg-slate-100 border-4 border-slate-900 rounded-xl flex items-center justify-center hover:bg-yellow-300 hover:shadow-[4px_4px_0px_0px_#0f172a] transition-all shrink-0 active:translate-y-1 active:shadow-none">
                 <Layout size={20} className="text-slate-900" />
               </button>
-              <div className="relative max-w-md w-full hidden md:block group">
+              <div className="relative max-w-md w-full hidden md:block group text-slate-900">
                 <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                 <input 
                   type="text" 
@@ -999,7 +1561,7 @@ export default function App() {
                   onClick={() => setProfileOpen(!profileOpen)}
                   className="w-12 h-12 rounded-xl bg-purple-500 border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex items-center justify-center font-black text-white cursor-pointer hover:-translate-y-1 transition-transform"
                 >
-                  {currentUser?.initials || 'AD'}
+                  {getInitials(userProfile?.name)}
                 </div>
 
                 <AnimatePresence>
@@ -1014,8 +1576,8 @@ export default function App() {
                         className="absolute right-0 top-16 w-64 bg-white border-4 border-slate-900 rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] z-50 overflow-hidden flex flex-col"
                       >
                         <div className="p-4 border-b-4 border-slate-900 bg-yellow-300">
-                          <p className="font-black text-slate-900 truncate">{currentUser?.name || 'Admin User'}</p>
-                          <p className="text-xs font-bold text-slate-600 truncate">{currentUser?.email || 'admin@nexus.ai'}</p>
+                          <p className="font-black text-slate-900 truncate">{userProfile?.name || 'Admin User'}</p>
+                          <p className="text-xs font-bold text-slate-600 truncate">{userProfile?.email || 'admin@nexus.ai'}</p>
                         </div>
                         <div className="p-2 bg-slate-50">
                            <button onClick={() => { setProfileOpen(false); setActiveTab('profile'); }} className="w-full text-left px-4 py-2 font-bold text-sm text-slate-700 hover:bg-slate-200 hover:text-slate-900 rounded-lg transition-colors">View Profile</button>
@@ -1023,7 +1585,7 @@ export default function App() {
                         </div>
                         <div className="p-2 border-t-4 border-slate-900 bg-rose-100">
                           <button 
-                            onClick={() => { setProfileOpen(false); setCurrentUser(null); setView('landing'); }}
+                            onClick={handleLogout}
                             className="w-full flex items-center gap-2 px-4 py-2 font-black text-sm text-rose-600 hover:bg-rose-200 rounded-lg transition-colors"
                           >
                             <LogOut size={16} /> Sign Out
@@ -1037,13 +1599,44 @@ export default function App() {
             </div>
           </header>
 
-          {/* Scrollable Content */}
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-10">
             <AnimatePresence mode="wait">
               
               {/* --- DASHBOARD TAB --- */}
               {activeTab === 'dashboard' && (
-                <motion.div key="dashboard" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-6xl mx-auto">
+                <motion.div key="dashboard" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-6xl mx-auto text-slate-900">
+                  
+                  {/* --- PRODUCTION ENGINE ALIGNMENT ALERT --- */}
+                  <div className="bg-blue-50 border-4 border-blue-500 rounded-2xl p-6 shadow-[6px_6px_0px_0px_#3b82f6] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative overflow-hidden">
+                     <div className="absolute top-0 right-0 h-full w-24 bg-blue-100 opacity-20 transform skew-x-12" />
+                     <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                           <span className="px-2 py-0.5 bg-blue-600 text-white rounded font-black text-[10px] uppercase tracking-wider">Production Architecture</span>
+                           <h4 className="font-black text-sm uppercase tracking-wider text-blue-900">Execution Plane Allocation</h4>
+                        </div>
+                        <p className="font-bold text-xs text-blue-700 leading-relaxed max-w-2xl">
+                           Demo executes candidate rankings locally on the isomorphic Client-Side Engine (V4 Parity) for up to 5,000 files. Production configurations offload datasets containing up to 100,000 items asynchronously to Python clusters running <code className="bg-blue-100 border border-blue-300 px-1 py-0.5 rounded font-mono text-blue-900 font-black">rank.py</code>.
+                        </p>
+                     </div>
+                     <div className="flex items-center gap-2 shrink-0">
+                        <button 
+                           onClick={() => setExecutionPlane('local')}
+                           className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase border-2 transition-all ${executionPlane === 'local' ? 'bg-blue-600 border-slate-900 text-white shadow-[2px_2px_0px_0px_#000]' : 'bg-white border-slate-300 text-slate-500'}`}
+                        >
+                           Demo Engine
+                        </button>
+                        <button 
+                           onClick={() => {
+                             setExecutionPlane('remote');
+                             showToast("Offloaded backend calculations (rank.py simulator locked for sandbox evaluation).", "yellow");
+                           }}
+                           className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase border-2 transition-all ${executionPlane === 'remote' ? 'bg-indigo-600 border-slate-900 text-white shadow-[2px_2px_0px_0px_#000]' : 'bg-white border-slate-300 text-slate-500'}`}
+                        >
+                           Remote rank.py
+                        </button>
+                     </div>
+                  </div>
+
                   <div>
                     <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">System Overview</h1>
                     <p className="text-slate-500 font-bold mt-2 text-lg">Executing offline Python v4 logic securely in browser.</p>
@@ -1056,8 +1649,54 @@ export default function App() {
                     <StatCard title="Avg Score" value={stats.avgScore} sub="Pool quality" icon={Award} trend={1} />
                   </div>
 
+                  <div className="grid lg:grid-cols-2 gap-6">
+                    <CleanCard className="p-8 bg-white">
+                      <h3 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tighter flex items-center gap-2 font-black">
+                        <Filter size={24} className="text-blue-600"/> Recruitment Funnel
+                      </h3>
+                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                         <FunnelStep label="Uploaded" count={funnelStats.uploaded} color="text-slate-900" />
+                         <FunnelStep label="Qualified" count={funnelStats.qualified} color="text-blue-600" />
+                         <FunnelStep label="Shortlist" count={funnelStats.shortlisted} color="text-purple-600" />
+                         <FunnelStep label="Interview Ready" count={funnelStats.interviewReady} color="text-pink-500" />
+                         <FunnelStep label="Finalists" count={funnelStats.finalists} color="text-emerald-500" />
+                      </div>
+                    </CleanCard>
+                    
+                    <CleanCard className="p-8 bg-blue-50 flex flex-col h-full max-h-[300px]">
+                      <h3 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tighter flex items-center gap-2 font-black">
+                        <Calendar size={24} className="text-blue-600"/> Previous Ranking Runs
+                      </h3>
+                      <div className="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                        {rankingRuns.length === 0 ? (
+                          <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 opacity-70 mt-10">
+                             <Database size={32} className="mb-3 text-slate-400" />
+                             <p className="font-black text-sm uppercase tracking-wider">No historical runs.</p>
+                             <p className="text-xs font-bold mt-1">Upload JSONL to execute a new run and save to DB.</p>
+                          </div>
+                        ) : (
+                          rankingRuns.map((run: any) => (
+                            <div 
+                              onClick={() => handleSelectHistoricalRun(run)}
+                              key={run.id} 
+                              className="bg-white border-4 border-slate-900 p-4 rounded-xl shadow-[4px_4px_0px_0px_#0f172a] hover:-translate-y-1 hover:shadow-[6px_6px_0px_0px_#3b82f6] transition-all cursor-pointer group"
+                            >
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="font-black text-sm text-slate-900 group-hover:text-blue-600 transition-colors">{run.date} - {run.filename}</span>
+                                <span className="text-xs font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded border-2 border-emerald-900">Completed & Telemetry Saved</span>
+                              </div>
+                              <div className="flex justify-between text-xs font-bold text-slate-500">
+                                <span>{run.candidates} Candidates</span>
+                                <span>Top: {run.topScore}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </CleanCard>
+                  </div>
+
                   <div className="grid lg:grid-cols-3 gap-6">
-                    {/* Action Panel */}
                     <CleanCard className="lg:col-span-2 p-8 flex flex-col justify-between bg-emerald-50">
                       <div>
                         <h3 className="text-3xl font-black text-slate-900 mb-2 uppercase tracking-tighter flex items-center gap-3">
@@ -1078,16 +1717,39 @@ export default function App() {
                       </div>
                     </CleanCard>
 
-                    {/* Config Snapshot */}
-                    <CleanCard className="p-8 bg-blue-50">
-                      <h3 className="text-sm font-black text-blue-600 uppercase tracking-widest mb-6 pb-4 border-b-4 border-slate-900">Math Weights</h3>
+                    <CleanCard className="p-8 bg-pink-50 flex flex-col justify-center h-full">
+                      <h3 className="text-sm font-black text-pink-600 uppercase tracking-widest mb-6 pb-4 border-b-4 border-slate-900">Math Weights</h3>
                       <div className="space-y-4 font-black text-sm">
                         <div className="flex justify-between text-slate-700"><span className="uppercase">Skills</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">22%</span></div>
                         <div className="flex justify-between text-slate-700"><span className="uppercase">Career</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">19%</span></div>
                         <div className="flex justify-between text-slate-700"><span className="uppercase">JD Fit</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">15%</span></div>
                         <div className="flex justify-between text-slate-700"><span className="uppercase">Assessments</span><span className="text-slate-900 bg-white border-4 border-slate-900 px-2 py-0.5 rounded-md shadow-[2px_2px_0px_0px_#0f172a]">13%</span></div>
                         <div className="pt-4 mt-4 border-t-4 border-slate-900 flex justify-between text-slate-700">
-                          <span className="uppercase mt-1">Clamp limits</span><span className="text-purple-600 bg-white border-4 border-slate-900 px-2 py-1 rounded-md shadow-[4px_4px_0px_0px_#0f172a]">[0.5, 1.2]</span>
+                          <span className="uppercase mt-1 font-black">Clamp limits</span><span className="text-purple-600 bg-white border-4 border-slate-900 px-2 py-1 rounded-md shadow-[4px_4px_0px_0px_#0f172a]">[0.5, 1.2]</span>
+                        </div>
+                      </div>
+                    </CleanCard>
+
+                    <CleanCard className="lg:col-span-3 p-8 bg-purple-50">
+                      <h3 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tighter flex items-center gap-2">
+                        <BarChart2 size={24} className="text-purple-600"/> Candidate Source Analytics
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                        <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col items-center justify-center text-center hover:-translate-y-1 transition-transform cursor-default">
+                          <span className="text-3xl font-black text-slate-900 mb-2">45%</span>
+                          <span className="text-sm font-black uppercase tracking-widest text-blue-600">LinkedIn</span>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col items-center justify-center text-center hover:-translate-y-1 transition-transform cursor-default">
+                          <span className="text-3xl font-black text-slate-900 mb-2">25%</span>
+                          <span className="text-sm font-black uppercase tracking-widest text-emerald-600">Naukri</span>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col items-center justify-center text-center hover:-translate-y-1 transition-transform cursor-default">
+                          <span className="text-3xl font-black text-slate-900 mb-2">20%</span>
+                          <span className="text-sm font-black uppercase tracking-widest text-purple-600">Referral</span>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col items-center justify-center text-center hover:-translate-y-1 transition-transform cursor-default">
+                          <span className="text-3xl font-black text-slate-900 mb-2">10%</span>
+                          <span className="text-sm font-black uppercase tracking-widest text-slate-500">Indeed</span>
                         </div>
                       </div>
                     </CleanCard>
@@ -1100,223 +1762,197 @@ export default function App() {
                 <motion.div key="candidates" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6 max-w-7xl mx-auto">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
                     <div>
-                      <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">Candidate Index</h1>
-                      <p className="text-slate-500 font-bold mt-2 text-lg">Select any row to view expanded math telemetry.</p>
+                      <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter">
+                         {activeHistoricalRun ? "Historical Telemetry" : "Candidate Index"}
+                      </h1>
+                      <p className="text-slate-500 font-bold mt-2 text-lg">
+                         {activeHistoricalRun ? `Inspecting telemetry audit: ${activeHistoricalRun.filename}` : "Select any row to view expanded math telemetry."}
+                      </p>
                     </div>
-                    <div className="flex bg-white p-2 rounded-xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] shrink-0 gap-2">
-                      <button onClick={() => setComparisonMode(false)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${!comparisonMode ? 'bg-blue-500 text-white shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Standard UI</button>
-                      <button onClick={() => setComparisonMode(true)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${comparisonMode ? 'bg-pink-400 text-slate-900 shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Hacker Grid</button>
+
+                    <div className="flex flex-wrap gap-4 shrink-0">
+                      {activeHistoricalRun && (
+                         <BrutalButton 
+                           onClick={() => {
+                             setActiveHistoricalRun(null);
+                             showToast("Returned to real-time evaluations index.");
+                           }} 
+                           variant="pink" 
+                           className="py-2.5 px-4 text-xs font-black uppercase"
+                         >
+                            <ArrowLeft size={14}/> Back to Current Index
+                         </BrutalButton>
+                      )}
+
+                      <div className="flex bg-white p-2 rounded-xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] shrink-0 gap-2 font-bold">
+                        <button onClick={() => setComparisonMode(false)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${!comparisonMode ? 'bg-blue-500 text-white shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Standard UI</button>
+                        <button onClick={() => setComparisonMode(true)} className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${comparisonMode ? 'bg-pink-400 text-slate-900 shadow-[2px_2px_0px_0px_#0f172a] border-4 border-slate-900' : 'text-slate-600 hover:bg-slate-100 border-4 border-transparent'}`}>Hacker Grid</button>
+                      </div>
                     </div>
                   </div>
 
-                  <CleanCard className="overflow-hidden p-0 border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] bg-white">
-                    <div className="overflow-x-auto">
-                      {!comparisonMode ? (
-                        <table className="w-full text-left">
-                          <thead>
-                            <tr className="bg-slate-100 border-b-4 border-slate-900">
-                              <th className="p-3 sm:p-5 w-24 text-center font-black text-sm uppercase tracking-widest text-slate-900">Rank</th>
-                              <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900">Identity</th>
-                              <th className="p-3 sm:p-5 w-32 font-black text-sm uppercase tracking-widest text-slate-900">Score</th>
-                              <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900 hidden md:table-cell">Reasoning Log</th>
-                              <th className="p-3 sm:p-5 w-20 text-center"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y-4 divide-slate-100">
-                            {filteredRankedData.slice(0, 100).map((c) => {
-                              const isExpanded = expandedRow === c.rank;
-                              const bd = c.breakdown;
-                              return (
-                                <React.Fragment key={c.candidate_id}>
-                                  <tr onClick={() => setExpandedRow(isExpanded ? null : c.rank)} className={`hover:bg-yellow-50 transition-colors cursor-pointer ${isExpanded ? 'bg-blue-50' : ''}`}>
-                                    <td className="p-3 sm:p-5 text-center">
-                                      <div className="w-12 h-12 rounded-xl bg-white border-4 border-slate-900 flex items-center justify-center text-lg font-black text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] mx-auto">
-                                        {c.rank}
-                                      </div>
-                                    </td>
-                                    <td className="p-3 sm:p-5">
-                                      <div className="font-black text-lg text-slate-900 truncate max-w-[200px] sm:max-w-[250px]">{c.rawProfile.profile?.current_title || 'Unknown Role'}</div>
-                                      <div className="flex items-center gap-3 mt-2">
-                                        <span className="text-xs font-bold font-mono text-slate-500 bg-slate-200 px-2 py-1 rounded-md border-2 border-slate-300">
-                                          {c.candidate_id.substring(0, 12)}...
+                  {/* Empty state gate if candidates array is empty and not inspecting history */}
+                  {candidates.length === 0 && !activeHistoricalRun ? (
+                    <div className="text-center py-20 bg-slate-50 border-4 border-dashed border-slate-400 rounded-3xl p-8 max-w-lg mx-auto shadow-[4px_4px_0px_0px_#0f172a] mt-10">
+                      <Upload className="mx-auto text-slate-400 mb-6" size={48} />
+                      <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight">No Active Candidate Index</h3>
+                      <p className="font-bold text-slate-500 mt-2 text-sm leading-relaxed">
+                         Upload a structured candidate file (.jsonl) on the dashboard or invoke Demo Mode below to explore model evaluations.
+                      </p>
+                      
+                      {/* --- CLEAR DEMO MODE BUTTON ISOLATION --- */}
+                      <div className="mt-8 p-4 border-4 border-dashed border-yellow-400 bg-yellow-50 rounded-2xl font-bold">
+                         <span className="text-[10px] font-black uppercase tracking-widest text-yellow-600 block mb-2">🔧 Developer Demo Protocol</span>
+                         <BrutalButton onClick={seedMoreCandidates} variant="yellow" className="w-full py-3 text-xs">
+                            Generate Demo Pool (Anonymized)
+                         </BrutalButton>
+                      </div>
+                    </div>
+                  ) : (
+                    <CleanCard className="overflow-hidden p-0 border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] bg-white">
+                      <div className="overflow-x-auto">
+                        {!comparisonMode ? (
+                          <table className="w-full text-left">
+                            <thead>
+                              <tr className="bg-slate-100 border-b-4 border-slate-900">
+                                <th className="p-3 sm:p-5 w-24 text-center font-black text-sm uppercase tracking-widest text-slate-900">Rank</th>
+                                <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900">Identity</th>
+                                <th className="p-3 sm:p-5 w-32 font-black text-sm uppercase tracking-widest text-slate-900">Score</th>
+                                <th className="p-3 sm:p-5 font-black text-sm uppercase tracking-widest text-slate-900 hidden md:table-cell">Reasoning Log</th>
+                                <th className="p-3 sm:p-5 w-20 text-center"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y-4 divide-slate-100">
+                              {(activeHistoricalRun ? activeHistoricalRun.top_results : filteredRankedData).slice(0, 100).map((c: any) => {
+                                const isExpanded = expandedRow === c.rank;
+                                const bd = c.breakdown;
+                                const rowStatus = candidateWorkflows[c.candidate_id]?.status;
+                                const rowColorMap = { strong: 'bg-emerald-50 hover:bg-emerald-100', review: 'bg-yellow-50 hover:bg-yellow-100', reject: 'bg-rose-50 hover:bg-rose-100 opacity-60' } as any;
+                                const bgClass = rowColorMap[rowStatus] || 'hover:bg-yellow-50';
+
+                                return (
+                                  <React.Fragment key={c.candidate_id}>
+                                    <tr onClick={() => setExpandedRow(isExpanded ? null : c.rank)} className={`${bgClass} transition-colors cursor-pointer ${isExpanded ? 'bg-blue-50' : ''}`}>
+                                      <td className="p-3 sm:p-5 text-center">
+                                        <div className="w-12 h-12 rounded-xl bg-white border-4 border-slate-900 flex items-center justify-center text-lg font-black text-slate-900 shadow-[4px_4px_0px_0px_#0f172a] mx-auto">
+                                          {c.rank}
+                                        </div>
+                                      </td>
+                                      <td className="p-3 sm:p-5">
+                                        <div className="font-black text-lg text-slate-900 truncate max-w-[200px] sm:max-w-[250px] flex items-center gap-2">
+                                          {c.rawProfile?.profile?.current_title || 'Unknown Role'}
+                                          {rowStatus === 'strong' && <ThumbsUp size={16} className="text-emerald-500" />}
+                                        </div>
+                                        <div className="flex items-center gap-3 mt-2">
+                                          <span className="text-xs font-bold font-mono text-slate-500 bg-slate-200 px-2 py-1 rounded-md border-2 border-slate-300">
+                                            {c.candidate_id.substring(0, 12)}...
+                                          </span>
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(c.candidate_id); }}
+                                            className="text-slate-400 hover:text-blue-600 transition-colors bg-white border-2 border-slate-300 p-1 rounded-md shadow-sm"
+                                            title="Copy Candidate ID"
+                                          >
+                                            <FileText size={14} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                      <td className="p-3 sm:p-5">
+                                        <span className="px-4 py-2 bg-emerald-100 text-emerald-800 border-4 border-emerald-900 rounded-xl font-black text-lg block w-fit shadow-[4px_4px_0px_0px_#064e3b]">
+                                          {c.score.toFixed(6)}
                                         </span>
+                                      </td>
+                                      <td className="p-3 sm:p-5 text-sm font-bold text-slate-600 max-w-md hidden md:table-cell leading-relaxed border-l-4 border-slate-100 pl-6">
+                                        {c.reasoning}
+                                      </td>
+                                      <td className="p-3 sm:p-5 text-slate-400 text-center">
                                         <button 
                                           type="button"
-                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(c.candidate_id); }}
-                                          className="text-slate-400 hover:text-blue-600 transition-colors bg-white border-2 border-slate-300 p-1 rounded-md shadow-sm"
-                                          title="Copy Candidate ID"
+                                          onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            setExpandedRow(isExpanded ? null : c.rank);
+                                          }}
+                                          className="w-10 h-10 inline-flex items-center justify-center rounded-xl border-4 border-slate-900 bg-white hover:bg-yellow-300 shadow-[4px_4px_0px_0px_#0f172a] transition-all cursor-pointer active:translate-y-1 active:shadow-none"
+                                          aria-label={isExpanded ? "Close Row" : "Expand Row"}
                                         >
-                                          <FileText size={14} />
+                                          {isExpanded ? <ChevronUp size={24} className="text-slate-900" /> : <ChevronDown size={24} className="text-slate-900" />}
                                         </button>
-                                      </div>
-                                    </td>
-                                    <td className="p-3 sm:p-5">
-                                      <span className="px-4 py-2 bg-emerald-100 text-emerald-800 border-4 border-emerald-900 rounded-xl font-black text-lg block w-fit shadow-[4px_4px_0px_0px_#064e3b]">
-                                        {c.score.toFixed(6)}
-                                      </span>
-                                    </td>
-                                    <td className="p-3 sm:p-5 text-sm font-bold text-slate-600 max-w-md hidden md:table-cell leading-relaxed border-l-4 border-slate-100 pl-6">
-                                      {c.reasoning}
-                                    </td>
-                                    <td className="p-3 sm:p-5 text-slate-400 text-center">
-                                      <button 
-                                        type="button"
-                                        onClick={(e) => { 
-                                          e.stopPropagation(); 
-                                          setExpandedRow(isExpanded ? null : c.rank);
-                                        }}
-                                        className="w-10 h-10 inline-flex items-center justify-center rounded-xl border-4 border-slate-900 bg-white hover:bg-yellow-300 shadow-[4px_4px_0px_0px_#0f172a] transition-all cursor-pointer active:translate-y-1 active:shadow-none"
-                                        aria-label={isExpanded ? "Close Row" : "Expand Row"}
-                                      >
-                                        {isExpanded ? <ChevronUp size={24} className="text-slate-900" /> : <ChevronDown size={24} className="text-slate-900" />}
-                                      </button>
-                                    </td>
-                                  </tr>
-                                  
-                                  {isExpanded && (
-                                    <tr>
-                                      <td colSpan={5} className="p-0 border-b-4 border-slate-900 bg-slate-50 relative">
-                                        <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
-                                        <motion.div 
-                                          initial={{ opacity: 0, y: -10 }} 
-                                          animate={{ opacity: 1, y: 0 }} 
-                                          className="p-4 sm:p-8 overflow-hidden"
-                                        >
-                                          {bd.honeypot ? (
-                                            <div className="flex items-center gap-6 bg-white border-4 border-rose-400 p-6 rounded-2xl shadow-[6px_6px_0px_0px_#fb7185] text-rose-600">
-                                              <div className="bg-rose-100 p-4 rounded-xl border-4 border-rose-400 shadow-inner"><ShieldAlert size={32} /></div>
-                                              <div>
-                                                <h4 className="font-black uppercase tracking-wider text-lg mb-2 text-rose-500 drop-shadow-sm">Honeypot Triggered</h4>
-                                                <p className="font-bold text-slate-700 leading-relaxed max-w-3xl">Metadata values declare expert qualifications despite conflicting duration history. Baseline floor scoring enforced.</p>
-                                              </div>
-                                            </div>
-                                          ) : (
-                                            <div className="flex flex-col xl:flex-row gap-8">
-                                              {/* Left: Math & Telemetry */}
-                                              <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8">
-                                                <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
-                                                  <h4 className="text-sm font-black text-blue-600 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><Briefcase size={18}/> Core Dimensions</h4>
-                                                  <ProgressBar label="Career Profile" value={bd.career} />
-                                                  <ProgressBar label="Skills Density" value={bd.skills} />
-                                                  <ProgressBar label="Experience Match" value={bd.experience} />
-                                                  <ProgressBar label="Education Tier" value={bd.education} />
-                                                </div>
-
-                                                <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] space-y-6">
-                                                  <h4 className="text-sm font-black text-pink-500 uppercase tracking-widest border-b-4 border-slate-900 pb-3 flex items-center gap-2"><CheckCircle size={18}/> Fit Indicators</h4>
-                                                  <ProgressBar label="JD Fit (IDF Rare)" value={bd.jd_fit} colorClass="bg-pink-400" />
-                                                  <ProgressBar label="Descriptions" value={bd.description} colorClass="bg-pink-400" />
-                                                  <ProgressBar label="Assessments" value={bd.assessments} colorClass="bg-pink-400" />
-                                                  <ProgressBar label="Location" value={bd.location} colorClass="bg-pink-400" />
-                                                </div>
-
-                                                <div className="md:col-span-2 bg-yellow-300 p-6 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex flex-col sm:flex-row justify-between items-center gap-6">
-                                                  <div className="flex-1 w-full space-y-3">
-                                                    <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
-                                                      <span className="text-xs uppercase font-black tracking-widest">Raw Base Math</span>
-                                                      <span className="font-mono text-lg font-bold bg-white border-2 border-slate-900 px-2 rounded">{bd.base_score.toFixed(6)}</span>
-                                                    </div>
-                                                    <div className="flex justify-between items-center border-b-4 border-slate-900 pb-2 bg-white/50 px-4 py-2 rounded-xl">
-                                                      <span className="text-xs uppercase font-black tracking-widest">Behavioral Mod</span>
-                                                      <span className="font-mono text-lg font-bold text-blue-600 bg-white border-2 border-blue-600 px-2 rounded">{bd.behavioral_mult.toFixed(4)}x</span>
-                                                    </div>
-                                                  </div>
-                                                  <div className="shrink-0 text-center bg-white border-4 border-slate-900 rounded-2xl p-4 shadow-inner min-w-[160px]">
-                                                    <span className="text-xs uppercase font-black tracking-widest text-slate-500 block mb-1">Norm. Output</span>
-                                                    <span className="text-4xl font-black text-emerald-500 tracking-tighter drop-shadow-md">{c.score.toFixed(6)}</span>
-                                                  </div>
-                                                </div>
-                                              </div>
-
-                                              {/* Right: AI Synthesis Panel */}
-                                              <div className="w-full xl:w-1/3 bg-slate-900 text-white rounded-2xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_#fde047] p-6 relative overflow-hidden flex flex-col">
-                                                <div className="absolute top-0 right-0 bg-yellow-300 text-slate-900 font-black px-4 py-1 rounded-bl-xl border-l-4 border-b-4 border-slate-900 text-xs uppercase tracking-widest flex items-center gap-1">
-                                                  <Sparkles size={14}/> Nexus Engine
-                                                </div>
-                                                
-                                                <h4 className="text-2xl font-black text-yellow-300 uppercase tracking-tighter mb-4 mt-2">
-                                                  AI Justification
-                                                </h4>
-                                                
-                                                <div className="space-y-4 flex-1">
-                                                  <p className="text-sm font-bold leading-relaxed text-slate-300">
-                                                    I have positioned this candidate at <span className="text-white bg-blue-600 px-2 py-0.5 rounded border border-blue-400 shadow-sm">Rank #{c.rank}</span> with a final confidence score of <span className="text-white bg-emerald-600 px-2 py-0.5 rounded border border-emerald-400 shadow-sm">{c.score.toFixed(4)}</span>.
-                                                  </p>
-                                                  
-                                                  <div className="p-4 bg-slate-800 border-l-4 border-yellow-300 rounded-r-xl text-sm font-medium text-slate-200 leading-relaxed shadow-inner">
-                                                    {c.reasoning}
-                                                  </div>
-                                                  
-                                                  <p className="text-xs font-bold leading-relaxed text-slate-400">
-                                                    <strong>Key Drivers:</strong> The positioning is heavily influenced by their {(bd.skills * 100).toFixed(0)}% skill density match and a behavioral multiplier of {bd.behavioral_mult.toFixed(2)}x, placing them {c.rank <= 10 ? 'in the top percentile' : 'within the standard distribution'} of the evaluated pool.
-                                                  </p>
-                                                </div>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </motion.div>
                                       </td>
                                     </tr>
-                                  )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      ) : (
-                        /* TERMINAL MODE (Playground Vibe) */
-                        <table className="w-full text-left font-mono text-sm font-bold bg-slate-900 text-slate-300">
-                          <thead>
-                            <tr className="bg-black text-[11px] uppercase tracking-widest text-yellow-300 border-b-4 border-slate-700">
-                              <th className="p-4 border-r-4 border-slate-800">Rnk</th>
-                              <th className="p-4 border-r-4 border-slate-800 w-32">ID</th>
-                              <th className="p-4 border-r-4 border-slate-800">Car</th>
-                              <th className="p-4 border-r-4 border-slate-800">Desc</th>
-                              <th className="p-4 border-r-4 border-slate-800">Skl</th>
-                              <th className="p-4 border-r-4 border-slate-800">JD</th>
-                              <th className="p-4 border-r-4 border-slate-800">Asst</th>
-                              <th className="p-4 border-r-4 border-slate-800">Exp</th>
-                              <th className="p-4 border-r-4 border-slate-800">Loc</th>
-                              <th className="p-4 border-r-4 border-slate-800">Edu</th>
-                              <th className="p-4 text-pink-400 border-r-4 border-slate-800">B.Mult</th>
-                              <th className="p-4 bg-slate-800 border-r-4 border-slate-700">Base</th>
-                              <th className="p-4 bg-blue-600 text-white font-black">Norm Output</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y-4 divide-slate-800">
-                            {filteredRankedData.slice(0, 100).map(c => {
-                              const bd = c.breakdown;
-                              if (bd.honeypot) return (
-                                <tr key={c.candidate_id} className="bg-rose-950 text-rose-400">
-                                  <td className="p-4 border-r-4 border-slate-800">#{c.rank}</td>
-                                  <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800">{c.candidate_id}</td>
-                                  <td colSpan={10} className="p-4 text-center tracking-widest border-r-4 border-slate-800 bg-rose-900/50 font-black">|| HONEYPOT ALERT ||</td>
-                                  <td className="p-4 font-black">0.010000</td>
-                                </tr>
-                              );
-                              return (
-                                <tr key={c.candidate_id} className="hover:bg-slate-800">
-                                  <td className="p-4 border-r-4 border-slate-800 text-white">#{c.rank}</td>
-                                  <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800 text-yellow-300" title={c.candidate_id}>{c.candidate_id.substring(0,8)}..</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.career.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.description.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.skills.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.jd_fit.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.assessments.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.experience.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.location.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800">{bd.education.toFixed(3)}</td>
-                                  <td className="p-4 border-r-4 border-slate-800 text-pink-400 font-black">{bd.behavioral_mult.toFixed(3)}</td>
-                                  <td className="p-4 bg-slate-800 border-r-4 border-slate-700 text-white">{bd.base_score.toFixed(5)}</td>
-                                  <td className="p-4 bg-blue-600/20 text-blue-300 text-base font-black">{c.score.toFixed(6)}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  </CleanCard>
+                                    
+                                    {isExpanded && (
+                                      <tr>
+                                        <td colSpan={5} className="p-0 border-b-4 border-slate-900 bg-slate-50 relative">
+                                          <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
+                                          <motion.div 
+                                            initial={{ opacity: 0, y: -10 }} 
+                                            animate={{ opacity: 1, y: 0 }} 
+                                            className="p-4 sm:p-8 overflow-hidden"
+                                          >
+                                            <CandidateExpandedPanel c={c} bd={bd} workflow={candidateWorkflows[c.candidate_id]} updateWorkflow={updateWorkflow} showToast={showToast} />
+                                          </motion.div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <table className="w-full text-left font-mono text-sm font-bold bg-slate-900 text-slate-300">
+                            <thead>
+                              <tr className="bg-black text-[11px] uppercase tracking-widest text-yellow-300 border-b-4 border-slate-700 font-bold">
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Rnk</th>
+                                <th className="p-4 border-r-4 border-slate-800 w-32 font-bold">ID</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Car</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Desc</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Skl</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">JD</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Asst</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Exp</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Loc</th>
+                                <th className="p-4 border-r-4 border-slate-800 font-bold">Edu</th>
+                                <th className="p-4 text-pink-400 border-r-4 border-slate-800 font-bold">B.Mult</th>
+                                <th className="p-4 bg-slate-800 border-r-4 border-slate-700 font-bold">Base</th>
+                                <th className="p-4 bg-blue-600 text-white font-black">Norm Output</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y-4 divide-slate-800">
+                              {(activeHistoricalRun ? activeHistoricalRun.top_results : filteredRankedData).slice(0, 100).map((c: any) => {
+                                const bd = c.breakdown;
+                                if (bd.honeypot) return (
+                                  <tr key={c.candidate_id} className="bg-rose-950 text-rose-400">
+                                    <td className="p-4 border-r-4 border-slate-800">#{c.rank}</td>
+                                    <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800">{c.candidate_id}</td>
+                                    <td colSpan={10} className="p-4 text-center tracking-widest border-r-4 border-slate-800 bg-rose-900/50 font-black">|| HONEYPOT ALERT ||</td>
+                                    <td className="p-4 font-black text-rose-300">0.010000</td>
+                                  </tr>
+                                );
+                                return (
+                                  <tr key={c.candidate_id} className="hover:bg-slate-800">
+                                    <td className="p-4 border-r-4 border-slate-800 text-white">#{c.rank}</td>
+                                    <td className="p-4 truncate max-w-[100px] border-r-4 border-slate-800 text-yellow-300 text-xs" title={c.candidate_id}>{c.candidate_id.substring(0,8)}..</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.career.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.description.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.skills.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.jd_fit.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.assessments.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.experience.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.location.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800">{bd.education.toFixed(3)}</td>
+                                    <td className="p-4 border-r-4 border-slate-800 text-pink-400 font-black">{bd.behavioral_mult.toFixed(3)}</td>
+                                    <td className="p-4 bg-slate-800 border-r-4 border-slate-700 text-white">{bd.base_score.toFixed(5)}</td>
+                                    <td className="p-4 bg-blue-600/20 text-blue-300 text-base font-black">{c.score.toFixed(6)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </CleanCard>
+                  )}
                 </motion.div>
               )}
 
@@ -1327,6 +1963,20 @@ export default function App() {
                     <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Configurations</h1>
                     <p className="text-slate-500 font-bold mt-2 text-lg">Locked parameters ensuring strict Python v4 parity.</p>
                   </div>
+                  
+                  {/* --- DEMO SEED PROTOCOL INSIDE CONFIG --- */}
+                  <div className="p-6 border-4 border-dashed border-yellow-400 bg-yellow-50 rounded-2xl shadow-[4px_4px_0px_0px_#eab308] font-bold">
+                     <h3 className="font-black text-lg uppercase tracking-tight text-slate-900 flex items-center gap-2 mb-2">
+                        <DatabaseZap size={24} className="text-yellow-600"/> Synthetic Generator Protocol (Demo Mode)
+                     </h3>
+                     <p className="font-bold text-xs text-slate-600 leading-relaxed max-w-xl mb-4">
+                        For system validations without pre-packaged datasets, activate the seeding sequence. This spawns 25 realistic, anonymized vector search engineers conforming strictly to V4 core dimensions.
+                     </p>
+                     <BrutalButton onClick={seedMoreCandidates} variant="yellow" className="py-3 px-6 text-sm">
+                        Inject Synthetic Candidates to Supabase
+                     </BrutalButton>
+                  </div>
+
                   <CleanCard className="p-10 bg-white">
                     <div className="flex items-center gap-6 mb-10 pb-8 border-b-4 border-slate-900">
                       <div className="w-20 h-20 bg-rose-200 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-slate-900 shadow-[6px_6px_0px_0px_#0f172a] shrink-0 transform -rotate-6">
@@ -1334,7 +1984,7 @@ export default function App() {
                       </div>
                       <p className="text-slate-700 font-bold max-w-xl text-lg leading-relaxed">These core algorithmic weights are immutable in the browser environment to guarantee exact math execution matching your terminal scripts.</p>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 font-bold">
                       {Object.entries(WEIGHTS).map(([key, w]) => (
                         <div key={key} className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 text-center shadow-[6px_6px_0px_0px_#0f172a] hover:-translate-y-1 hover:shadow-[10px_10px_0px_0px_#0f172a] transition-all">
                           <div className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">{key}</div>
@@ -1346,45 +1996,162 @@ export default function App() {
                 </motion.div>
               )}
 
-              {/* --- PROFILE TAB --- */}
+              {/* --- OPERATOR PROFILE TAB --- */}
               {activeTab === 'profile' && (
-                <motion.div key="profile" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-4xl mx-auto">
-                   <div>
-                    <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Operator Profile</h1>
-                    <p className="text-slate-500 font-bold mt-2 text-lg">Identity and access management.</p>
-                  </div>
-                  <CleanCard className="p-10 bg-white">
-                    <div className="flex items-center gap-8 mb-10 pb-8 border-b-4 border-slate-900">
-                      <div className="w-32 h-32 bg-purple-500 border-4 border-slate-900 rounded-2xl flex items-center justify-center text-white text-5xl font-black shadow-[8px_8px_0px_0px_#0f172a] shrink-0 transform rotate-3">
-                        {currentUser?.initials || 'AD'}
+                <motion.div key="profile" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-8 max-w-6xl mx-auto">
+                   <div className="flex flex-col lg:flex-row gap-8 items-start lg:items-center justify-between">
+                     <div>
+                      <h1 className="text-5xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-sm">Operator Identity</h1>
+                      <p className="text-slate-500 font-bold mt-2 text-lg">Performance telemetry and platform engagement.</p>
+                    </div>
+                    <div className="flex bg-white p-4 rounded-2xl border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] gap-6 items-center shrink-0">
+                      <div className="w-20 h-20 bg-purple-500 border-4 border-slate-900 rounded-xl flex items-center justify-center text-white text-3xl font-black shadow-[4px_4px_0px_0px_#0f172a] transform -rotate-3 hover:rotate-0 transition-transform font-bold">
+                        {getInitials(userProfile?.name)}
                       </div>
                       <div>
-                        <h2 className="text-4xl font-black text-slate-900 mb-2">{currentUser?.name || 'Admin User'}</h2>
-                        <p className="text-xl font-bold text-slate-500 flex items-center gap-2">
-                          <Mail size={20} /> {currentUser?.email || 'admin@nexus.ai'}
+                        <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">{userProfile?.name || 'Admin User'}</h2>
+                        <p className="text-sm font-bold text-slate-500 flex items-center gap-1 mt-1">
+                          <Mail size={14} /> {userProfile?.email || 'admin@nexus.ai'}
                         </p>
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 border-2 border-emerald-900 rounded mt-2 font-black text-emerald-800 text-[10px] uppercase tracking-widest shadow-sm">
+                           <ShieldAlert size={10} /> {userProfile?.role || 'Level 4 (Architect)'}
+                        </div>
                       </div>
                     </div>
+                   </div>
+
+                  <div className="grid lg:grid-cols-3 gap-6">
                     <div className="space-y-6">
-                      <div className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
-                        <h3 className="font-black text-sm uppercase tracking-widest text-slate-500 mb-4">Clearance Level</h3>
-                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-100 border-4 border-emerald-900 rounded-xl font-black text-emerald-800 shadow-[4px_4px_0px_0px_#064e3b]">
-                          <ShieldAlert size={18} /> Level 4 (Architect)
+                      <CleanCard className="p-8 bg-slate-900 text-white border-4 border-slate-900">
+                        <div className="absolute top-0 right-0 bg-yellow-300 text-slate-900 font-black px-3 py-1 rounded-bl-xl border-l-4 border-b-4 border-slate-900 text-[10px] uppercase tracking-widest">
+                           Nexus Evaluation
                         </div>
-                      </div>
-                      
-                      <div className="bg-slate-50 p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a]">
-                        <h3 className="font-black text-sm uppercase tracking-widest text-slate-500 mb-4">Account Status</h3>
-                        <div className="flex items-center gap-4">
-                          <div className="flex-1">
-                            <p className="font-bold text-slate-900">Active Terminal Session</p>
-                            <p className="text-sm font-bold text-slate-500 mt-1">Parity engine connected securely.</p>
+                        <h3 className="text-lg font-black text-yellow-300 mb-6 uppercase tracking-tighter flex items-center gap-2 mt-2">
+                          <Brain size={20} className="text-pink-400" /> Recruiter Intelligence
+                        </h3>
+                        <div className="flex items-center gap-6 mb-6 border-b-4 border-slate-800 pb-6">
+                          <div className="text-6xl font-black tracking-tighter text-white drop-shadow-md font-bold">92<span className="text-2xl text-slate-500 font-normal">/100</span></div>
+                        </div>
+                        <div className="space-y-3 text-sm font-bold text-slate-300">
+                          <div className="flex items-center gap-2"><CheckCircle size={16} className="text-emerald-400 shrink-0"/> Candidate selection accuracy</div>
+                          <div className="flex items-center gap-2"><CheckCircle size={16} className="text-emerald-400 shrink-0"/> Interview success rate</div>
+                          <div className="flex items-center gap-2"><CheckCircle size={16} className="text-emerald-400 shrink-0"/> Offer acceptance rate</div>
+                          <div className="flex items-center gap-2"><CheckCircle size={16} className="text-emerald-400 shrink-0"/> AI recommendation utilization</div>
+                        </div>
+                      </CleanCard>
+
+                      <CleanCard className="p-6 bg-pink-50">
+                        <h3 className="text-sm font-black text-pink-600 uppercase tracking-widest mb-4 border-b-4 border-slate-900 pb-2 flex items-center gap-2">
+                          <Award size={16}/> Operator Badges
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4 font-bold text-slate-700">
+                           <div className="bg-white p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] text-center flex flex-col items-center gap-2 hover:-translate-y-1 transition-transform">
+                              <div className="w-10 h-10 bg-yellow-300 rounded-full border-4 border-slate-900 flex items-center justify-center"><Award size={20} className="text-slate-900"/></div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">Top Recruiter</span>
+                           </div>
+                           <div className="bg-white p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] text-center flex flex-col items-center gap-2 hover:-translate-y-1 transition-transform">
+                              <div className="w-10 h-10 bg-blue-400 rounded-full border-4 border-slate-900 flex items-center justify-center text-white"><Users size={20}/></div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">100K Processed</span>
+                           </div>
+                           <div className="bg-white p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] text-center flex flex-col items-center gap-2 hover:-translate-y-1 transition-transform">
+                              <div className="w-10 h-10 bg-purple-500 rounded-full border-4 border-slate-900 flex items-center justify-center text-white"><Zap size={20}/></div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">AI Power User</span>
+                           </div>
+                           <div className="bg-white p-3 rounded-xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] text-center flex flex-col items-center gap-2 hover:-translate-y-1 transition-transform">
+                              <div className="w-10 h-10 bg-emerald-400 rounded-full border-4 border-slate-900 flex items-center justify-center text-slate-900"><RefreshCw size={20}/></div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">Fastest Team</span>
+                           </div>
+                        </div>
+                      </CleanCard>
+                    </div>
+
+                    <div className="space-y-6 lg:col-span-2">
+                       <CleanCard className="p-8 bg-blue-50">
+                        <h3 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tighter flex items-center gap-2 font-black">
+                          <BarChart2 size={24} className="text-blue-600"/> Lifetime Performance Metrics
+                        </h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 font-bold">
+                           <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center">
+                            <span className="text-3xl font-black text-slate-900 mb-1">102,450</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Candidates Processed</span>
                           </div>
-                          <CheckCircle size={32} className="text-emerald-500" />
+                          <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center">
+                            <span className="text-3xl font-black text-slate-900 mb-1">{rankingRuns.length || 124}</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Ranking Runs</span>
+                          </div>
+                          <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center">
+                            <span className="text-3xl font-black text-slate-900 mb-1">320</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-purple-600">Interviews Scheduled</span>
+                          </div>
+                          <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center">
+                            <span className="text-3xl font-black text-slate-900 mb-1">
+                              {rankingRuns.length > 0 ? Math.max(...rankingRuns.map(r => parseFloat(r.topScore) || 0)).toFixed(3) : '0.985'}
+                            </span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-pink-600">Top Score Found</span>
+                          </div>
+                          <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center bg-emerald-100">
+                            <span className="text-3xl font-black text-emerald-800 mb-1">78%</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Success Rate</span>
+                          </div>
+                           <div className="bg-white p-6 rounded-2xl border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] flex flex-col justify-center">
+                            <span className="text-3xl font-black text-slate-900 mb-1">45</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Offers Made</span>
+                          </div>
                         </div>
+                      </CleanCard>
+
+                      <div className="grid md:grid-cols-2 gap-6">
+                        <CleanCard className="p-6 bg-white flex flex-col">
+                          <h3 className="text-sm font-black text-slate-600 uppercase tracking-widest mb-4 border-b-4 border-slate-900 pb-2 flex items-center gap-2">
+                            <Search size={16}/> Saved Filters
+                          </h3>
+                          <div className="space-y-3 font-bold text-sm">
+                            <button className="w-full text-left bg-slate-50 hover:bg-yellow-50 border-4 border-slate-900 p-3 rounded-xl flex items-center gap-2 shadow-[2px_2px_0px_0px_#0f172a] hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_#0f172a] transition-all">
+                              <CheckCircle size={16} className="text-emerald-500"/> Senior Python Engineers
+                            </button>
+                            <button className="w-full text-left bg-slate-50 hover:bg-yellow-50 border-4 border-slate-900 p-3 rounded-xl flex items-center gap-2 shadow-[2px_2px_0px_0px_#0f172a] hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_#0f172a] transition-all">
+                              <CheckCircle size={16} className="text-emerald-500"/> RAG Specialists
+                            </button>
+                            <button className="w-full text-left bg-slate-50 hover:bg-yellow-50 border-4 border-slate-900 p-3 rounded-xl flex items-center gap-2 shadow-[2px_2px_0px_0px_#0f172a] hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_#0f172a] transition-all">
+                              <CheckCircle size={16} className="text-emerald-500"/> ML Engineers - Bangalore
+                            </button>
+                          </div>
+                        </CleanCard>
+
+                        <CleanCard className="p-6 bg-white flex flex-col h-full max-h-72 overflow-hidden">
+                           <h3 className="text-sm font-black text-slate-600 uppercase tracking-widest mb-4 border-b-4 border-slate-900 pb-2 flex items-center gap-2 shrink-0">
+                            <Layout size={16}/> Activity Timeline
+                          </h3>
+                          <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                             {rankingRuns.slice(0, 3).map((run: any, i: number) => (
+                               <div key={run.id}>
+                                 <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest block mb-2">{i === 0 ? 'Latest' : run.date}</span>
+                                 <div className="flex items-center gap-3 font-bold text-sm text-slate-700 bg-slate-50 p-2 border-l-4 border-slate-900 rounded">
+                                   <div className="w-2 h-2 rounded-full bg-slate-900 shrink-0"/> Ranked {run.candidates} candidates
+                                 </div>
+                               </div>
+                             ))}
+                             {rankingRuns.length === 0 && (
+                               <>
+                                 <div>
+                                   <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest block mb-2">Today</span>
+                                   <div className="flex items-center gap-3 font-bold text-sm text-slate-700 bg-slate-50 p-2 border-l-4 border-slate-900 rounded">
+                                     <div className="w-2 h-2 rounded-full bg-slate-900 shrink-0"/> Ranked 10,000 candidates
+                                   </div>
+                                 </div>
+                                 <div>
+                                   <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest block mb-2">Yesterday</span>
+                                   <div className="flex items-center gap-3 font-bold text-sm text-slate-700 bg-slate-50 p-2 border-l-4 border-slate-900 rounded mb-2">
+                                     <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"/> Shortlisted 120 candidates
+                                   </div>
+                                 </div>
+                               </>
+                             )}
+                          </div>
+                        </CleanCard>
                       </div>
                     </div>
-                  </CleanCard>
+                  </div>
                 </motion.div>
               )}
 
@@ -1402,5 +2169,161 @@ export default function App() {
       </AnimatePresence>
       {renderContent()}
     </>
+  );
+}
+
+// ==========================================
+// OPERATOR AUTHENTICATION ROUTERS
+// ==========================================
+function LoginView({ setView, onLogin, currentUser }: any) {
+  return (
+    <AuthLayout title="Welcome Back" subtitle="Enter your credentials to access the workspace." setView={setView} currentUser={currentUser}>
+      <form onSubmit={(e) => { 
+        e.preventDefault(); 
+        const formData = new FormData(e.currentTarget);
+        onLogin(formData.get('email'), formData.get('password')); 
+      }}>
+        <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+        <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
+        
+        <div className="flex items-center justify-between mt-2 mb-8 font-bold">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 border-4 border-slate-900 rounded bg-white text-blue-500 focus:ring-yellow-300 focus:ring-offset-0 transition-all checked:bg-blue-500" />
+            <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">Remember Me</span>
+          </label>
+          <button type="button" onClick={() => setView('forgotPassword')} className="text-sm font-black text-pink-500 hover:text-pink-600 hover:underline uppercase tracking-wider transition-colors">
+            Lost Key?
+          </button>
+        </div>
+
+        <BrutalButton type="submit" variant="primary" className="w-full py-4 text-lg">
+          Initialize Session <ArrowRight size={24} />
+        </BrutalButton>
+      </form>
+
+      <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+          No clearance?{' '}
+          <button type="button" onClick={() => setView('signup')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
+            Sign Up
+          </button>
+        </p>
+      </div>
+    </AuthLayout>
+  );
+}
+
+function SignupView({ setView, onSignup, currentUser }: any) {
+  return (
+    <AuthLayout title="Create Profile" subtitle="Register a new operator identity for the DB." setView={setView} currentUser={currentUser}>
+      <form onSubmit={(e) => { 
+        e.preventDefault(); 
+        const formData = new FormData(e.currentTarget);
+        onSignup(formData.get('fullName'), formData.get('email'), formData.get('password')); 
+      }}>
+        <AuthInput name="fullName" label="Full Name" type="text" placeholder="Jane Doe" icon={User} />
+        <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+        <AuthInput name="password" label="Password" type="password" placeholder="••••••••" icon={Lock} />
+
+        <BrutalButton type="submit" variant="pink" className="w-full py-4 text-lg mt-6">
+          Complete Profile <Zap size={24} />
+        </BrutalButton>
+      </form>
+      
+      <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+          Already registered?{' '}
+          <button type="button" onClick={() => setView('login')} className="text-blue-600 hover:text-blue-700 font-black hover:underline transition-colors">
+            Return to Login
+          </button>
+        </p>
+      </div>
+    </AuthLayout>
+  );
+}
+
+function ForgotPasswordView({ setView, currentUser }: any) {
+  return (
+    <AuthLayout title="System Reset" subtitle="We'll send a recovery link to your terminal." setView={setView} currentUser={currentUser}>
+      <form onSubmit={(e) => { e.preventDefault(); setView('login'); }}>
+        <AuthInput name="email" label="Email Address" type="email" placeholder="agent@nexus.ai" icon={Mail} />
+        <BrutalButton type="submit" variant="yellow" className="w-full py-4 text-lg mt-6">
+          Transmit Link <ArrowRight size={24} />
+        </BrutalButton>
+      </form>
+      <div className="mt-8 text-center pt-6 border-t-4 border-slate-100">
+        <button type="button" onClick={() => setView('login')} className="text-sm font-black text-slate-600 hover:text-slate-900 uppercase tracking-wider hover:underline transition-colors">
+          Cancel Reset Sequence
+        </button>
+      </div>
+    </AuthLayout>
+  );
+}
+
+function AuthInput({ label, type = "text", placeholder, icon: Icon, name }: any) {
+  return (
+    <div className="space-y-2 mb-5 w-full text-left">
+      <label className="font-black text-sm uppercase tracking-wider text-slate-700">{label}</label>
+      <div className="relative">
+        {Icon && <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />}
+        <input 
+          name={name}
+          type={type} 
+          placeholder={placeholder} 
+          className={`w-full bg-white border-4 border-slate-900 rounded-xl py-3.5 px-4 focus:outline-none focus:ring-4 focus:ring-yellow-300 transition-all font-bold text-slate-900 placeholder:text-slate-400 shadow-[4px_4px_0px_0px_#0f172a] ${Icon ? 'pl-12' : ''}`} 
+          required
+        />
+      </div>
+    </div>
+  );
+}
+
+function AuthLayout({ children, title, subtitle, setView, currentUser }: any) {
+  return (
+    <div className="min-h-screen w-full flex text-slate-900 font-sans selection:bg-blue-300 bg-[#f8fafc] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:24px_24px]">
+      <button 
+        onClick={() => {
+          if (currentUser) setView('dashboard');
+          else setView('landing');
+        }} 
+        className="absolute top-6 left-6 flex items-center gap-2 font-black uppercase tracking-widest text-sm text-slate-600 hover:text-slate-900 transition-colors z-20 font-bold"
+      >
+        <ArrowLeft size={20} /> Back
+      </button>
+      
+      <div className="hidden lg:flex w-1/2 bg-blue-500 border-r-4 border-slate-900 flex-col justify-center items-center p-12 relative overflow-hidden">
+         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#000_2px,transparent_2px)] [background-size:20px_20px]" />
+         
+         <div className="relative z-10 text-center space-y-6 max-w-lg">
+            <div className="w-24 h-24 bg-yellow-300 rounded-3xl flex items-center justify-center border-4 border-slate-900 shadow-[8px_8px_0px_0px_#0f172a] mx-auto mb-8 transform -rotate-6 hover:rotate-0 transition-transform">
+               <Cpu size={48} className="text-slate-900" />
+            </div>
+            <h1 className="text-5xl xl:text-6xl font-black tracking-tighter text-white drop-shadow-[4px_4px_0px_#0f172a] leading-tight">
+               Unlock the <br/>
+               <span className="text-yellow-300">Engine.</span>
+            </h1>
+            <p className="text-lg font-bold text-blue-100 border-l-4 border-pink-400 pl-4 text-left">
+               Access the V4 scoring model. Manage candidate pipelines, deploy configurations, and export parity-locked telemetry.
+            </p>
+         </div>
+
+         <div className="absolute top-20 right-20 w-16 h-16 bg-pink-500 rounded-full border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] animate-bounce" style={{ animationDuration: '3s' }} />
+         <div className="absolute bottom-20 left-20 w-20 h-20 bg-emerald-400 border-4 border-slate-900 shadow-[4px_4px_0px_0px_#0f172a] transform rotate-12" />
+      </div>
+
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md bg-white p-8 sm:p-10 rounded-3xl border-4 border-slate-900 shadow-[12px_12px_0px_0px_#1e293b]"
+        >
+          <div className="mb-10 text-center">
+            <h2 className="text-4xl font-black tracking-tighter text-slate-900 mb-2 uppercase">{title}</h2>
+            <p className="text-slate-500 font-bold">{subtitle}</p>
+          </div>
+          {children}
+        </motion.div>
+      </div>
+    </div>
   );
 }
