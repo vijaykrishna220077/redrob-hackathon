@@ -718,16 +718,16 @@ export default function App() {
     };
   }, [filteredRankedData]);
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setIsUploading(true);
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async(event) => {
       // Yield to main thread to allow "Processing..." UI to render
-      setTimeout(() => {
+      setTimeout(async () => {
         const text = event.target.result;
         let parsed = [];
         try {
@@ -746,8 +746,26 @@ export default function App() {
           }
         }
         if (parsed.length > 0) {
-          setCandidates(parsed);
-          showToast(`Successfully loaded ${parsed.length} candidates.`);
+        setCandidates(parsed);
+      
+        try {
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+
+          if (user) {
+            await supabase.from("ranking_runs").insert({
+              user_id: user.id,
+              filename: file.name,
+              total_candidates: parsed.length,
+              top_score: 0
+            });
+          }
+        } catch (err) {
+          console.error("Failed to save ranking run:", err);
+        }
+
+        showToast(`Successfully loaded ${parsed.length} candidates.`);
         } else {
           showToast("No valid JSON candidates found in file.", "error");
         }
