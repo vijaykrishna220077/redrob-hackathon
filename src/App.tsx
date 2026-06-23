@@ -522,12 +522,12 @@ function ProgressBar({ label, value, colorClass = "bg-blue-500" }: any) {
 
 function FunnelStep({ label, count, color }: any) {
   return (
-    <div className={`bg-white border-4 border-slate-900 p-4 rounded-xl shadow-[4px_4px_0px_0px_#0f172a] text-center w-full in-h-[110px] flex flex-col justify-center`}>
-      <div className={`text-3xl font-black ${color}`}>
+    <div className="bg-white border-4 border-slate-900 p-4 rounded-xl shadow-[4px_4px_0px_0px_#0f172a] text-center w-full min-h-[110px] flex flex-col justify-center">
+      <div className={`text-xl lg:text-2xl font-black ${color}`}>
         {count.toLocaleString()}
       </div>
 
-      <div className="text-[10px] font-black uppercase tracking-normal text-slate-500 text-center leading-tight mt-2">
+      <div className="text-[9px] md:text-[10px] font-black uppercase tracking-tight text-slate-500 text-center leading-tight mt-2 break-words">
         {label}
       </div>
     </div>
@@ -1280,7 +1280,23 @@ export default function App() {
       }
 
       if (parsed.length > 0) {
+
+      const isValidCandidate = (c: any) =>
+        c?.candidate_id &&
+        c?.profile &&
+        c?.skills &&
+        c?.career_history;
+
+        if (!parsed.every(isValidCandidate)) {
+          showToast(
+            "Invalid candidate file. Please upload a valid candidate JSONL dataset.",
+            "error"
+          );
+          return;
+        }
+
         const tempRanked = rankCandidates(parsed, referenceDate);
+        
         const maxScore = tempRanked.length > 0 ? Math.max(...tempRanked.map(r => r.score)) : 0;
 
         // Extrapolate detailed top results array for database save telemetry
@@ -1654,7 +1670,7 @@ export default function App() {
                       <h3 className="text-xl font-black text-slate-900 mb-6 uppercase tracking-tighter flex items-center gap-2 font-black">
                         <Filter size={24} className="text-blue-600"/> Recruitment Funnel
                       </h3>
-                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                          <FunnelStep label="Uploaded" count={funnelStats.uploaded} color="text-slate-900" />
                          <FunnelStep label="Qualified" count={funnelStats.qualified} color="text-blue-600" />
                          <FunnelStep label="Shortlist" count={funnelStats.shortlisted} color="text-purple-600" />
