@@ -1,7 +1,7 @@
 import { supabase } from './lib/supabase';
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-
+import * as XLSX from "xlsx";
 // ==========================================
 // SUPABASE CLIENT SETUP & SAFETY GATES
 // ==========================================
@@ -1830,22 +1830,34 @@ export default function App() {
     }
   };
 
-  const downloadSubmissionCsv = () => {
-    const dataToExport = activeHistoricalRun ? activeHistoricalRun.top_results : filteredRankedData;
-    if (!dataToExport || dataToExport.length === 0) return;
-    const header = ["candidate_id", "rank", "score", "reasoning"];
-    const rows = dataToExport.slice(0, 100).map((c: any) => [
-      c.candidate_id, c.rank, c.score.toFixed(6), `"${c.reasoning.replace(/"/g, '""')}"`
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [header.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `submission_${refDateString}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const downloadSubmissionXlsx = () => {
+  const dataToExport = activeHistoricalRun
+    ? activeHistoricalRun.top_results
+    : filteredRankedData;
+
+  if (!dataToExport || dataToExport.length === 0) return;
+
+  const rows = dataToExport.slice(0, 100).map((c: any) => ({
+    candidate_id: c.candidate_id,
+    rank: c.rank,
+    score: Number(c.score.toFixed(6)),
+    reasoning: c.reasoning,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    "Ranked Candidates"
+  );
+
+  XLSX.writeFile(
+    workbook,
+    `submission_${refDateString}.xlsx`
+  );
+};
 
   const copyToClipboard = (text: string) => {
     const tempTextArea = document.createElement("textarea");
@@ -2186,8 +2198,8 @@ export default function App() {
                            {isUploading ? "Processing..." : "Upload JSONL"}
                            <input type="file" accept=".jsonl,.json,.txt" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
                         </label>
-                        <BrutalButton onClick={downloadSubmissionCsv} variant="secondary" className="py-4">
-                          <Download size={20} /> Export Filtered CSV
+                        <BrutalButton onClick={downloadSubmissionXlsx} variant="secondary" className="py-4">
+                          <Download size={20} /> Export Filtered XLSX
                         </BrutalButton>
                       </div>
                     </CleanCard>
