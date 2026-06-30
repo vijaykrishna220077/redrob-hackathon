@@ -1141,7 +1141,7 @@ function AICopilot({ rankedData, stats, funnelStats, refDateString, currentUser,
     try {
   console.log("📤 Sending request...");
 
-  const res = await fetch("http://127.0.0.1:3001/api/copilot", {
+  const res = await fetch("/api/copilot", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
