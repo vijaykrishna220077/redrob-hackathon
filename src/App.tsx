@@ -123,7 +123,8 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Calendar, Search, 
   Settings, Database, Zap, Cpu, Award, Sparkles, Brain, Filter,
   ArrowRight, Briefcase, RefreshCw, Bell, Layout, Eye, LogOut, Check, X,
-  Mail, Lock, User, Key, ArrowLeft, AlertTriangle, ThumbsUp, ThumbsDown, Clock, ClipboardList, DatabaseZap
+  Mail, Lock, User, Key, ArrowLeft, AlertTriangle, ThumbsUp, ThumbsDown, Clock, ClipboardList, DatabaseZap,
+  MessageSquare, Send, Bot, Loader2, Trash2, GitCompare, FileSearch2, Wand2
 } from 'lucide-react';
 
 // ==========================================
@@ -997,6 +998,327 @@ function SupabaseFallbackConfigView({ onBypass }: { onBypass: () => void }) {
 // ==========================================
 // MAIN WORKSPACE INTERFACE
 // ==========================================
+// ==========================================
+// AI RECRUITING COPILOT (NEXUS AI)
+// ==========================================
+
+// Lightweight markdown renderer so we don't pull in a new dependency.
+// Handles **bold**, bullet lists (lines starting with "- " or "• "), and line breaks.
+function renderMarkdownLite(text: string) {
+  const lines = (text || "").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let listBuffer: string[] = [];
+
+  const flushList = (key: string) => {
+    if (listBuffer.length) {
+      blocks.push(
+        <ul key={key} className="list-disc pl-5 space-y-1 my-1">
+          {listBuffer.map((item, i) => (
+            <li key={i}>{inlineFormat(item)}</li>
+          ))}
+        </ul>
+      );
+      listBuffer = [];
+    }
+  };
+
+  function inlineFormat(line: string) {
+    const parts = line.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((p, i) =>
+      p.startsWith("**") && p.endsWith("**") ? (
+        <strong key={i} className="font-black text-slate-900">{p.slice(2, -2)}</strong>
+      ) : (
+        <React.Fragment key={i}>{p}</React.Fragment>
+      )
+    );
+  }
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+      listBuffer.push(trimmed.replace(/^[-•]\s+/, ""));
+      return;
+    }
+    flushList(`list-${idx}`);
+    if (trimmed.length === 0) {
+      blocks.push(<div key={idx} className="h-2" />);
+    } else if (/^#{1,4}\s/.test(trimmed)) {
+      blocks.push(
+        <div key={idx} className="font-black text-slate-900 uppercase tracking-tight mt-1">
+          {inlineFormat(trimmed.replace(/^#{1,4}\s/, ""))}
+        </div>
+      );
+    } else {
+      blocks.push(<p key={idx} className="leading-relaxed">{inlineFormat(trimmed)}</p>);
+    }
+  });
+  flushList("list-end");
+  return blocks;
+}
+
+type CopilotMessage = { id: string; role: 'user' | 'assistant'; content: string; pending?: boolean };
+
+const COPILOT_QUICK_ACTIONS = [
+  { label: "Why ranked #1?", icon: Award, prompt: "Why is the top-ranked candidate in the current list ranked first? Break down the scoring." },
+  { label: "Compare candidates", icon: GitCompare, prompt: "Compare the top two candidates in the current list across skills, experience, assessments, and behavioral signals. Tell me who's stronger and why." },
+  { label: "Generate email", icon: Mail, prompt: "Draft a warm interview invitation email for the top-ranked candidate." },
+  { label: "Interview questions", icon: ClipboardList, prompt: "Generate 5 technical interview questions tailored to the top-ranked candidate's skill profile." },
+  { label: "Resume summary", icon: FileSearch2, prompt: "Summarize the top-ranked candidate's resume in 5 concise bullet points." },
+  { label: "Hire recommendation", icon: ThumbsUp, prompt: "Should I hire the top-ranked candidate? Give a recommendation with confidence %, reasons, and concerns." },
+];
+
+function AICopilot({ rankedData, stats, funnelStats, refDateString, currentUser, expandedCandidateId }: any) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<CopilotMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('nexus_copilot_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('nexus_copilot_history', JSON.stringify(messages.slice(-40))); } catch {}
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
+
+  // Build a compact, relevant context payload from live app state instead of mock data.
+  const buildContext = () => {
+    const focusCandidate = expandedCandidateId
+      ? rankedData.find((r: any) => r.candidate_id === expandedCandidateId)
+      : null;
+
+    const topCandidates = rankedData.slice(0, 15).map((r: any) => ({
+      rank: r.rank,
+      candidate_id: r.candidate_id,
+      score: r.score,
+      title: r.rawProfile?.profile?.current_title,
+      years_of_experience: r.rawProfile?.profile?.years_of_experience,
+      location: r.rawProfile?.profile?.location,
+      notice_period_days: r.rawProfile?.redrob_signals?.notice_period_days,
+      recruiter_response_rate: r.rawProfile?.redrob_signals?.recruiter_response_rate,
+      open_to_work: r.rawProfile?.redrob_signals?.open_to_work_flag,
+      github_activity_score: r.rawProfile?.redrob_signals?.github_activity_score,
+      skills: (r.rawProfile?.skills || []).map((s: any) => s.name).slice(0, 12),
+      breakdown: r.breakdown,
+      reasoning: r.reasoning,
+    }));
+
+    return {
+      reference_date: refDateString,
+      pipeline_stats: stats,
+      funnel_stats: funnelStats,
+      focus_candidate: focusCandidate ? {
+        candidate_id: focusCandidate.candidate_id,
+        rank: focusCandidate.rank,
+        score: focusCandidate.score,
+        breakdown: focusCandidate.breakdown,
+        reasoning: focusCandidate.reasoning,
+        profile: focusCandidate.rawProfile?.profile,
+        skills: focusCandidate.rawProfile?.skills,
+        career_history: focusCandidate.rawProfile?.career_history,
+        redrob_signals: focusCandidate.rawProfile?.redrob_signals,
+      } : null,
+      top_candidates: topCandidates,
+    };
+  };
+
+  const sendMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+    setError(null);
+    setInput("");
+
+    const userMsg: CopilotMessage = { id: 'u_' + Date.now(), role: 'user', content: trimmed };
+    const assistantId = 'a_' + Date.now();
+    const history = [...messages, userMsg];
+    setMessages([...history, { id: assistantId, role: 'assistant', content: '', pending: true }]);
+    setLoading(true);
+
+    try {
+  console.log("📤 Sending request...");
+
+  const res = await fetch("http://127.0.0.1:3001/api/copilot", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messages: history.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      context: buildContext(),
+    }),
+  });
+
+  console.log("📥 Status:", res.status);
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "Request failed");
+    throw new Error(errText);
+  }
+
+  const data = await res.json();
+
+  console.log("📦 Response:", data);
+
+  if (!data.success) {
+    throw new Error(data.error);
+  }
+
+  setMessages((prev) =>
+    prev.map((m) =>
+      m.id === assistantId
+        ? {
+            ...m,
+            content: data.text,
+            pending: false,
+          }
+        : m
+    )
+  );
+} catch (e: any) {
+  console.error(e);
+
+  setError(e?.message || "The copilot couldn't respond.");
+  setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+} finally {
+  setLoading(false);
+}
+};
+  const clearChat = () => {
+    setMessages([]);
+    try { localStorage.removeItem('nexus_copilot_history'); } catch {}
+  };
+
+  return (
+    <>
+      {/* Floating launcher */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="fixed bottom-6 right-6 z-50 w-16 h-16 rounded-2xl bg-yellow-300 border-4 border-slate-900 shadow-[6px_6px_0px_0px_#0f172a] flex items-center justify-center hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[8px_8px_0px_0px_#0f172a] active:translate-y-0 active:translate-x-0 active:shadow-[4px_4px_0px_0px_#0f172a] transition-all"
+        title="Nexus AI Copilot"
+      >
+        {open ? <X size={26} className="text-slate-900" /> : <Bot size={28} className="text-slate-900" />}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.96 }}
+            transition={{ duration: 0.18 }}
+            className="fixed bottom-28 right-6 z-50 w-[420px] max-w-[92vw] h-[600px] max-h-[78vh] bg-white border-4 border-slate-900 rounded-2xl shadow-[8px_8px_0px_0px_#0f172a] flex flex-col overflow-hidden"
+          >
+            {/* Header */}
+            <div className="h-16 bg-yellow-300 border-b-4 border-slate-900 flex items-center justify-between px-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-white rounded-lg border-4 border-slate-900 flex items-center justify-center">
+                  <Sparkles size={16} className="text-slate-900" />
+                </div>
+                <div>
+                  <div className="font-black text-sm uppercase tracking-tight text-slate-900 leading-none">Nexus AI Recruiter</div>
+                  <div className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">Recruiting Copilot</div>
+                </div>
+              </div>
+              <button onClick={clearChat} title="Clear conversation" className="w-8 h-8 flex items-center justify-center rounded-lg border-2 border-slate-900 bg-white hover:bg-rose-100 transition-colors">
+                <Trash2 size={14} className="text-slate-900" />
+              </button>
+            </div>
+
+            {/* Messages */}
+            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-slate-50">
+              {messages.length === 0 && (
+                <div className="space-y-3">
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide">Ask anything about your pipeline</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {COPILOT_QUICK_ACTIONS.map((qa) => (
+                      <button
+                        key={qa.label}
+                        onClick={() => sendMessage(qa.prompt)}
+                        className="text-left text-xs font-bold p-2.5 bg-white border-2 border-slate-900 rounded-xl hover:bg-blue-50 hover:-translate-y-0.5 transition-all flex items-center gap-2"
+                      >
+                        <qa.icon size={14} className="text-blue-600 shrink-0" />
+                        <span className="leading-tight">{qa.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {messages.map((m) => (
+                <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm border-2 border-slate-900 ${
+                    m.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white text-slate-900'
+                  }`}>
+                    {m.role === 'assistant' ? (
+                      m.content ? renderMarkdownLite(m.content) : (
+                        <span className="flex items-center gap-2 text-slate-400">
+                          <Loader2 size={14} className="animate-spin" /> Thinking…
+                        </span>
+                      )
+                    ) : (
+                      <span>{m.content}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {error && (
+                <div className="text-xs font-bold text-rose-600 bg-rose-50 border-2 border-rose-300 rounded-lg p-2 flex items-center gap-2">
+                  <ShieldAlert size={14} className="shrink-0" /> {error}
+                </div>
+              )}
+            </div>
+
+            {/* Suggested follow-ups when a conversation is active */}
+            {messages.length > 0 && (
+              <div className="px-3 pt-2 flex gap-1.5 overflow-x-auto shrink-0 bg-slate-50">
+                {COPILOT_QUICK_ACTIONS.slice(0, 4).map((qa) => (
+                  <button
+                    key={qa.label}
+                    onClick={() => sendMessage(qa.prompt)}
+                    disabled={loading}
+                    className="shrink-0 text-[11px] font-bold px-2.5 py-1.5 bg-white border-2 border-slate-900 rounded-lg hover:bg-blue-50 disabled:opacity-40 whitespace-nowrap"
+                  >
+                    {qa.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Input */}
+            <form
+              onSubmit={(e) => { e.preventDefault(); sendMessage(input); }}
+              className="border-t-4 border-slate-900 p-3 flex items-center gap-2 bg-white shrink-0"
+            >
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask anything..."
+                className="flex-1 text-sm font-medium px-3 py-2 rounded-lg border-2 border-slate-900 outline-none focus:ring-2 focus:ring-blue-400"
+                disabled={loading}
+              />
+              <button
+                type="submit"
+                disabled={loading || !input.trim()}
+                className="w-10 h-10 shrink-0 bg-blue-500 text-white rounded-lg border-2 border-slate-900 flex items-center justify-center disabled:opacity-40 hover:-translate-y-0.5 transition-all"
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              </button>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState('landing');
   const [activeTab, setActiveTab] = useState('dashboard'); 
@@ -2302,12 +2624,27 @@ export default function App() {
     );
   };
 
+  const showCopilot = !['landing', 'login', 'signup', 'forgotPassword'].includes(view);
+  const expandedCandidateId = expandedRow != null
+    ? filteredRankedData.find((r: any) => r.rank === expandedRow)?.candidate_id
+    : null;
+
   return (
     <>
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </AnimatePresence>
       {renderContent()}
+      {showCopilot && (
+        <AICopilot
+          rankedData={filteredRankedData}
+          stats={stats}
+          funnelStats={funnelStats}
+          refDateString={refDateString}
+          currentUser={currentUser}
+          expandedCandidateId={expandedCandidateId}
+        />
+      )}
     </>
   );
 }
