@@ -1087,45 +1087,58 @@ function AICopilot({ rankedData, stats, funnelStats, refDateString, currentUser,
 
   // Build a compact, relevant context payload from live app state instead of mock data.
   const buildContext = () => {
-    const focusCandidate = expandedCandidateId
-      ? rankedData.find((r: any) => r.candidate_id === expandedCandidateId)
-      : null;
+  const focusCandidate = expandedCandidateId
+    ? rankedData.find((r: any) => r.candidate_id === expandedCandidateId)
+    : null;
 
-    const topCandidates = rankedData.slice(0, 15).map((r: any) => ({
-      rank: r.rank,
-      candidate_id: r.candidate_id,
-      score: r.score,
-      title: r.rawProfile?.profile?.current_title,
-      years_of_experience: r.rawProfile?.profile?.years_of_experience,
-      location: r.rawProfile?.profile?.location,
-      notice_period_days: r.rawProfile?.redrob_signals?.notice_period_days,
-      recruiter_response_rate: r.rawProfile?.redrob_signals?.recruiter_response_rate,
-      open_to_work: r.rawProfile?.redrob_signals?.open_to_work_flag,
-      github_activity_score: r.rawProfile?.redrob_signals?.github_activity_score,
-      skills: (r.rawProfile?.skills || []).map((s: any) => s.name).slice(0, 12),
-      breakdown: r.breakdown,
-      reasoning: r.reasoning,
-    }));
+  const topCandidates = rankedData.slice(0, 25).map((r: any) => ({
+  rank: r.rank,
+  candidate_id: r.candidate_id,
+  score: r.score,
 
-    return {
-      reference_date: refDateString,
-      pipeline_stats: stats,
-      funnel_stats: funnelStats,
-      focus_candidate: focusCandidate ? {
-        candidate_id: focusCandidate.candidate_id,
-        rank: focusCandidate.rank,
-        score: focusCandidate.score,
-        breakdown: focusCandidate.breakdown,
-        reasoning: focusCandidate.reasoning,
-        profile: focusCandidate.rawProfile?.profile,
-        skills: focusCandidate.rawProfile?.skills,
-        career_history: focusCandidate.rawProfile?.career_history,
-        redrob_signals: focusCandidate.rawProfile?.redrob_signals,
-      } : null,
-      top_candidates: topCandidates,
-    };
+  profile: r.rawProfile?.profile,
+
+  skills: r.rawProfile?.skills,
+  education: r.rawProfile?.education,
+  career_history: r.rawProfile?.career_history,
+  projects: r.rawProfile?.projects,
+  certifications: r.rawProfile?.certifications,
+
+  redrob_signals: r.rawProfile?.redrob_signals,
+
+  breakdown: r.breakdown,
+  reasoning: r.reasoning,
+}));
+  console.log("Raw Profile:", rankedData[0]?.rawProfile);
+  return {
+    reference_date: refDateString,
+    pipeline_stats: stats,
+    funnel_stats: funnelStats,
+
+    focus_candidate: focusCandidate
+  ? {
+      candidate_id: focusCandidate.candidate_id,
+      rank: focusCandidate.rank,
+      score: focusCandidate.score,
+
+      profile: focusCandidate.rawProfile?.profile,
+
+      skills: focusCandidate.rawProfile?.skills,
+      education: focusCandidate.rawProfile?.education,
+      career_history: focusCandidate.rawProfile?.career_history,
+      projects: focusCandidate.rawProfile?.projects,
+      certifications: focusCandidate.rawProfile?.certifications,
+
+      redrob_signals: focusCandidate.rawProfile?.redrob_signals,
+
+      breakdown: focusCandidate.breakdown,
+      reasoning: focusCandidate.reasoning,
+    }
+  : null,
+
+    top_candidates: topCandidates,
   };
-
+};
   const sendMessage = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
